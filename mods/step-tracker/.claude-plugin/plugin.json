@@ -1,0 +1,11 @@
+{
+  "name": "step-tracker",
+  "version": "0.6.0",
+  "description": "A framed band above the prompt that shows Claude's plan steps, what it is doing right now, the calls it just made, a live activity graph, background agents and shells, and the branch you are on.",
+  "author": { "name": "ksssssw", "url": "https://github.com/ksssssw" },
+  "homepage": "https://github.com/ksssssw/awesome-claude-mods/tree/main/mods/step-tracker",
+  "repository": "https://github.com/ksssssw/awesome-claude-mods",
+  "license": "MIT",
+  "keywords": ["band", "progress", "todo", "agents", "terminal-ui"],
+  "types": "./types/index.d.ts"
+}
