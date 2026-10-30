@@ -1,0 +1,11 @@
+{
+  "name": "my-mod",
+  "version": "0.1.0",
+  "description": "One sentence on what the mod shows or changes.",
+  "author": { "name": "your-github-name", "url": "https://github.com/your-github-name" },
+  "homepage": "https://github.com/ksssssw/awesome-claude-mods/tree/main/mods/my-mod",
+  "repository": "https://github.com/ksssssw/awesome-claude-mods",
+  "license": "MIT",
+  "keywords": [],
+  "types": "./types/index.d.ts"
+}

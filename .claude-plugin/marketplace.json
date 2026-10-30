@@ -1,0 +1,18 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "awesome-claude-mods",
+  "description": "Small, token-free mods that reshape the Claude Code terminal.",
+  "owner": { "name": "ksssssw", "url": "https://github.com/ksssssw" },
+  "plugins": [
+    {
+      "name": "step-tracker",
+      "displayName": "Step Tracker",
+      "description": "A framed band above the prompt that shows Claude's plan steps, what it is doing right now, the calls it just made, a live activity graph, background agents and shells, and the branch you are on.",
+      "version": "0.6.0",
+      "author": { "name": "ksssssw", "url": "https://github.com/ksssssw" },
+      "category": "productivity",
+      "keywords": ["band", "progress", "todo", "agents", "terminal-ui"],
+      "source": "./mods/step-tracker"
+    }
+  ]
+}
