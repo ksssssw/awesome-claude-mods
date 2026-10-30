@@ -39,8 +39,8 @@ if [ -f "$forbidden" ]; then
   extra=$(grep -v '^\s*\(#\|$\)' "$forbidden" | paste -sd '|' -)
   [ -n "$extra" ] && patterns="$patterns|$extra"
 fi
-# The noreply address and the license's own wording are expected
-allow='users\.noreply\.github\.com|noreply@anthropic\.com'
+# The noreply addresses are expected, and so is this script's own pattern line in the history
+allow='users\.noreply\.github\.com|noreply@anthropic\.com|^[+-]?patterns='
 if git grep --untracked -n -I -i -E "$patterns" -- . ':!scripts/check.sh' | grep -v -i -E "$allow"; then
   fail "private strings in the tree (above)"
 fi
