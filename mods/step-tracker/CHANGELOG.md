@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.0
+
+- The band draws in English by default. A new `language` option (`en`, `ko`) switches every phrase to Korean.
+
 ## 0.6.0
 
 - Background shells: commands started with `run_in_background` or sent to the background with Ctrl+B show as `$` rows and keep the band up until their completion notification arrives or `TaskStop` ends them.

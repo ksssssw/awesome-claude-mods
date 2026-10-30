@@ -136,14 +136,14 @@ test('background agents keep the band up after the turn, each with what it does'
 
   const ui = await $.ui.mount({ ...band(100), surface: 'terminal' })
   // The turn is over: the line says the agents still run, glyph by glyph
-  expect(await ui.find({ type: 'Text', text: '작' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'B' })).toBeDefined()
   const row = await ui.find({ type: 'Button', text: /explore · .*search code ─ Grep render \(1\)/ })
   expect(row).toBeDefined()
   // Pressed, the agent's calls take the list's place; pressed shut, the list comes back
   await ui.press({ key: 'open-agent-ag1' })
-  expect(await ui.find({ type: 'Text', text: '작업: search code' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Task: search code' })).toBeDefined()
   await ui.press({ key: 'close-detail' })
-  expect(await ui.find({ type: 'Text', text: '작업: search code' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Task: search code' })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -162,9 +162,9 @@ test('the model stream passes untouched while the line names its phase', async (
   on('tool.call', () => ({ result: {} }))
   on('process.run', () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }))
   on('turn.step', async function* (_$, e) {
-    yield { kind: 'thinking', index: 0, text: '음' } as const
-    yield { kind: 'text', index: 1, text: '안녕' } as const
-    return { turnId: e.turnId, index: e.index, answer: '안녕', toolUses: [], stopReason: 'end_turn', usage: null }
+    yield { kind: 'thinking', index: 0, text: 'hm' } as const
+    yield { kind: 'text', index: 1, text: 'hello' } as const
+    return { turnId: e.turnId, index: e.index, answer: 'hello', toolUses: [], stopReason: 'end_turn', usage: null }
   })
   await $.turn.start({ turnId: 't1' } as never)
   const chunks: string[] = []
@@ -173,18 +173,18 @@ test('the model stream passes untouched while the line names its phase', async (
   expect(chunks).toEqual(['thinking', 'text'])
 
   const ui = await $.ui.mount({ ...band(100), surface: 'terminal' })
-  // After the text chunk the line reads 답변 쓰는 중, one glyph per run
-  expect(await ui.find({ type: 'Text', text: '답' })).toBeDefined()
+  // After the text chunk the line reads Writing the answer, one glyph per run
+  expect(await ui.find({ type: 'Text', text: 'W' })).toBeDefined()
   await ui.unmount()
 
   // A command this turn: its count opens the list of commands, and the call itself its whole line
-  await $.tool.call({ tool: 'Bash', command: 'git switch -c fix/typo', description: '수정 브랜치 만들기' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'git switch -c fix/typo', description: 'make a fix branch' } as never)
   const after = await $.ui.mount({ ...band(100), surface: 'terminal' })
   await after.press({ key: 'kind-run' })
-  expect(await after.find({ type: 'Text', text: /명령 1 ─ 이번 턴/ })).toBeDefined()
-  expect(await after.find({ type: 'Text', text: /Bash 수정 브랜치 만들기 {2}\(완료/ })).toBeDefined()
+  expect(await after.find({ type: 'Text', text: /run 1 ─ this turn/ })).toBeDefined()
+  expect(await after.find({ type: 'Text', text: /Bash make a fix branch {2}\(done/ })).toBeDefined()
   await after.press({ key: 'close-detail' })
-  const call = await after.find({ type: 'Button', text: 'Bash 수정 브랜치 만들기' })
+  const call = await after.find({ type: 'Button', text: 'Bash make a fix branch' })
   await after.press({ key: call?.props.key as string })
   expect(await after.find({ type: 'Text', text: '$ git switch -c fix/typo' })).toBeDefined()
   await after.unmount()
@@ -207,8 +207,8 @@ test('plan mode is read from its reminder when the classic events never arrive',
   await $.turn.start({ turnId: 't1' } as never)
   await $.prompt.attachment({ type: 'plan_mode', text: '', origin: { kind: 'engine' } } as never)
   const ui = await $.ui.mount({ ...band(100), surface: 'terminal' })
-  // 계획 세우는 중, one glyph per run
-  expect(await ui.find({ type: 'Text', text: '획' })).toBeDefined()
+  // Planning, one glyph per run
+  expect(await ui.find({ type: 'Text', text: 'P' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -256,7 +256,7 @@ test('a background shell keeps the band up after the turn until its notification
   expect(await ui.find({ type: 'Text', text: /\$/ })).toBeDefined()
   expect(await ui.find({ type: 'Button', text: /build the app ─ npm run build/ })).toBeDefined()
   await ui.press({ key: 'open-shell-b123' })
-  expect(await ui.find({ type: 'Text', text: /작업 ID: b123/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Task ID: b123/ })).toBeDefined()
   await ui.unmount()
 
   await $.prompt.submit({
@@ -266,4 +266,14 @@ test('a background shell keeps the band up after the turn until its notification
   const after = await $.ui.mount({ ...band(100), surface: 'terminal' })
   expect(await after.find({ type: 'Button', text: /build the app/ })).toBeUndefined()
   await after.unmount()
+})
+
+test('with language set to ko the band draws in Korean', { options: { language: 'ko' } }, async ($, on) => {
+  engine(on)
+  await $.tool.call({ tool: 'Read', file_path: '/r/a.ts' } as never)
+  await $.command.run({ command: 'steps' } as never).catch(() => undefined)
+  const ui = await $.ui.mount({ ...band(100), surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /이번 턴/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', text: '읽기 1' })).toBeDefined()
+  await ui.unmount()
 })

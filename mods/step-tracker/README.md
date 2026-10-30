@@ -23,8 +23,8 @@ With a plan (when Claude keeps a to-do list with `TodoWrite` or `TaskCreate`):
 │   └ ⠹ Bash run the unit tests                                                  │
 │ ○ Handle the empty state                      ·  ·  ·  ·  ·  ·  ·  ·           │
 ├────────────────────────────────────────────────────────────────────────────────┤
-│ ⠹ run the unit tests 실행 중                                             00:04 │
-│   이번 턴  읽기 6 · 수정 3 · 명령 2 ─ SearchPage.tsx, filters.ts               │
+│ ⠹ Running: run the unit tests                                            00:04 │
+│   This turn  read 6 · edit 3 · run 2 ─ SearchPage.tsx, filters.ts              │
 │   ◆ explore · feat/search-filter  find filter usages ─ Grep useFilter (12) 01:05│
 ╰────────────────────────────────────────────────────────────────────────────────╯
 ```
@@ -42,8 +42,8 @@ Without a plan, the calls Claude just finished rise from the bottom and fade as 
 │                                             ▝▜█████▛▘                           │
 │                                               ▝▘ ▘▝                             │
 ├─────────────────────────────────────────────────────────────────────────────────┤
-│ ⠹ SearchPage.tsx 수정 중                                                  00:02 │
-│   이번 턴  읽기 1 · 수정 1 · 명령 2 ─ SearchPage.tsx                             │
+│ ⠹ Editing SearchPage.tsx                                                  00:02 │
+│   This turn  read 1 · edit 1 · run 2 ─ SearchPage.tsx                            │
 │   $ start the dev server ─ npm run dev                                    03:10 │
 ╰─────────────────────────────────────────────────────────────────────────────────╯
 ```
@@ -53,15 +53,29 @@ Without a plan, the calls Claude just finished rise from the bottom and fade as 
 - **Timeline** (92 columns and wider, with a plan): one bar per step, the running bar growing in real time.
 - **Recent calls** (no plan): newest at the bottom, older ones fading as they rise; one that just finished is lit green for a moment, a failed one is a red `✗`.
 - **Activity graph** (92 columns and wider, no plan): calls per two seconds, colored by the kind most called (read blue, edit orange, run green, search purple, skill yellow). Under it, Claude walks while it works, thinks with `·∙•` over its head while the model thinks, and stands still and blinks when idle.
-- **Activity line**: what is happening now, with a glow that sweeps across it: waiting for the model, thinking, writing the answer, writing a change, `<file> 읽는/수정 중`, `<command> 실행 중`, and so on. In plan mode it reads as planning and the frame turns teal.
+- **Activity line**: what is happening now, with a glow that sweeps across it: waiting for the model, thinking, writing the answer, writing a change, reading or editing a file, running a command, and so on. In plan mode it reads as planning and the frame turns teal.
 - **This turn**: calls by kind and the files changed.
 - **Background work**: each running subagent (`◆`) with its task, current call and call count, and each background shell (`$`) started with `run_in_background` or sent there with Ctrl+B. The band stays up after the turn while any of them runs.
 
 ## Interaction
 
-- Recent calls, the counts (`명령 6`) and the agent and shell rows are buttons. Pressing one opens its detail in place of the list: the whole command or path, the pattern and where it looked, a skill's arguments, an agent's last 20 calls, a shell's command and task id. `‹ 닫기` or pressing it again closes it.
+- Recent calls, the counts (`run 6`) and the agent and shell rows are buttons. Pressing one opens its detail in place of the list: the whole command or path, the pattern and where it looked, a skill's arguments, an agent's last 20 calls, a shell's command and task id. `‹ Close` or pressing it again closes it.
 - Mouse clicks work in the fullscreen terminal (`"tui": "fullscreen"`). With the keyboard, focus the band with Ctrl+X Tab and press Enter on an item.
 - `/steps` forces the band on or off.
+
+## Configuration
+
+| Option | Values | Default |
+| --- | --- | --- |
+| `language` | `en` English, `ko` Korean | `en` |
+
+Set it with `/plugin configure step-tracker@awesome-claude-mods` in Claude Code, or from a shell:
+
+```bash
+echo '{"language":"ko"}' | claude plugin configure step-tracker@awesome-claude-mods --values-stdin
+```
+
+Restart Claude Code to apply it.
 
 ## Behavior
 
@@ -74,7 +88,6 @@ Without a plan, the calls Claude just finished rise from the bottom and fade as 
 
 ## Known limitations
 
-- The interface text is Korean for now. An English option is planned.
 - Plan mode is read from events another plugin can intercept. If one of your plugins answers those events without passing them on, the band only notices plan mode through `EnterPlanMode` and `ExitPlanMode` calls.
 - A background shell row is removed when its completion notification arrives. If that notification never reaches the session, the row stays until `/clear`.
 - Box-drawing and block characters assume a font where they are one cell wide.
@@ -83,7 +96,7 @@ Without a plan, the calls Claude just finished rise from the bottom and fade as 
 
 ```bash
 claude plugin validate mods/step-tracker --profile directory
-claude plugin test mods/step-tracker        # 25 tests
+claude plugin test mods/step-tracker        # 27 tests
 claude --plugin-dir mods/step-tracker       # load this folder directly, reloading on save
 ```
 

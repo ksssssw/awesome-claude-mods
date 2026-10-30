@@ -48,32 +48,27 @@ hooks API 참고 문서는 Claude Code에 들어 있습니다. Claude에게 "mod
 
 ## 로컬 작업 순서
 
-설치된 mod는 이 폴더가 아니라 `~/.claude/plugins/cache/<마켓플레이스>/<mod>/<버전>/`에 복사된 사본으로 돌아갑니다. 그래서 여기서 파일을 고치고 `/reload-plugins`만 실행하면 이전 사본이 다시 로드됩니다. 고친 내용을 보는 방법은 두 가지입니다.
-
-**빠르게 반복할 때**: `/plugin`에서 설치본을 끄고, 폴더를 직접 로드하는 세션을 띄웁니다. 저장할 때마다 다시 로드됩니다.
-
-```bash
-claude --plugin-dir mods/my-mod
-```
-
-**설치본으로 확인할 때**: clone한 폴더를 마켓플레이스로 한 번 추가합니다.
+clone한 폴더를 마켓플레이스로 한 번 추가하고, 거기서 설치합니다.
 
 ```bash
 claude plugin marketplace add /path/to/awesome-claude-mods
 claude plugin install my-mod@awesome-claude-mods
 ```
 
-그다음부터는 고칠 때마다 아래 순서를 따릅니다.
+이 레포처럼 폴더이고 `source`가 상대 경로인 마켓플레이스는 폴더를 직접 읽습니다. 파일을 고치고 `/reload-plugins`를 실행하면 세션에 바로 반영됩니다. `claude plugin list`의 `Read from:`에 폴더가 보이면 이 방식입니다. 작업하는 동안에는 버전을 올릴 필요가 없습니다.
 
-1. `mods/my-mod/.claude-plugin/plugin.json`과 `.claude-plugin/marketplace.json` 두 곳의 `version`을 올립니다. 버전이 같으면 update가 사본을 새로 만들지 않습니다.
-2. 사본을 갱신합니다.
-   ```bash
-   claude plugin marketplace update awesome-claude-mods
-   claude plugin update my-mod@awesome-claude-mods
-   ```
-3. `/reload-plugins`를 실행하거나 Claude Code를 재시작합니다.
+가장 빠르게 반복하려면 mod 폴더를 직접 로드하는 세션을 띄웁니다. 저장할 때마다 다시 로드됩니다. 설치본이 켜져 있으면 band가 두 번 그려지므로 `/plugin`에서 먼저 끕니다.
 
-사본이 원본과 같아졌는지는 `diff -rq ~/.claude/plugins/cache/awesome-claude-mods/my-mod/<버전> mods/my-mod`의 출력이 비어 있는지로 확인합니다.
+```bash
+claude --plugin-dir mods/my-mod
+```
+
+GitHub에서 설치한 사용자는 설치할 때 만든 사본으로 돌아갑니다. 그래서 `mods/my-mod/.claude-plugin/plugin.json`과 `.claude-plugin/marketplace.json` 두 곳의 버전을 올려야 변경이 전달되고, 사용자는 아래 명령으로 받습니다.
+
+```bash
+claude plugin marketplace update awesome-claude-mods
+claude plugin update my-mod@awesome-claude-mods
+```
 
 ## 검사
 

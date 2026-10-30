@@ -26,8 +26,8 @@
 │                                             ▝▜█████▛▘                           │
 │                                               ▝▘ ▘▝                             │
 ├─────────────────────────────────────────────────────────────────────────────────┤
-│ ⠹ SearchPage.tsx 수정 중                                                  00:02 │
-│   이번 턴  읽기 1 · 수정 1 · 명령 2 ─ SearchPage.tsx                             │
+│ ⠹ Editing SearchPage.tsx                                                  00:02 │
+│   This turn  read 1 · edit 1 · run 2 ─ SearchPage.tsx                            │
 │   $ start the dev server ─ npm run dev                                    03:10 │
 ╰─────────────────────────────────────────────────────────────────────────────────╯
 ```
@@ -89,7 +89,7 @@ claude plugin uninstall step-tracker@awesome-claude-mods
 
 | Mod | What it does | Where | Tokens | Version |
 | --- | --- | --- | --- | --- |
-| [step-tracker](mods/step-tracker) | Plan steps, what Claude is doing now, the calls it just made, a live activity graph with a walking mascot, background agents and shells, and the branch, in a framed band | Band above the prompt | 0 | 0.6.0 |
+| [step-tracker](mods/step-tracker) | Plan steps, what Claude is doing now, the calls it just made, a live activity graph with a walking mascot, background agents and shells, and the branch, in a framed band | Band above the prompt | 0 | 0.7.0 |
 
 ## Principles
 
@@ -111,7 +111,7 @@ awesome-claude-mods/
 
 ## Creating a mod
 
-Copy `template/` to `mods/<name>/`, list it in `.claude-plugin/marketplace.json`, and run `scripts/check.sh`. [CONTRIBUTING.md](CONTRIBUTING.md) walks through it, including why an installed mod does not pick up your edits until its version is raised.
+Copy `template/` to `mods/<name>/`, list it in `.claude-plugin/marketplace.json`, and run `scripts/check.sh`. [CONTRIBUTING.md](CONTRIBUTING.md) walks through it, including how edits reach an installed mod.
 
 ## License
 
