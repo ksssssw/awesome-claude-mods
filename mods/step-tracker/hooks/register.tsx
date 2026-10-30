@@ -32,6 +32,7 @@ import {
   progress,
   windowOffset,
 } from './model'
+import { setLanguage, t } from './i18n'
 import { activityCells, timelineCells } from './timeline'
 
 const PLUGIN = 'step-tracker'
@@ -154,8 +155,8 @@ function callDetail(e: Call): string[] {
   const firstLine = (text: string) => text.split('\n')[0] ?? ''
   if (e.tool === 'Bash') return [str('description'), '$ ' + firstLine(str('command'))].filter(line => line && line !== '$ ')
   if (str('file_path')) return [str('file_path')]
-  if (str('pattern')) return [`패턴: ${str('pattern')}`, ...(str('path') ? [`위치: ${str('path')}`] : [])]
-  if (e.tool === 'Skill') return [`스킬: ${str('skill')}`, ...(str('args') ? [`인자: ${firstLine(str('args'))}`] : [])]
+  if (str('pattern')) return [t().pattern(str('pattern')), ...(str('path') ? [t().path(str('path'))] : [])]
+  if (e.tool === 'Skill') return [t().skill(str('skill')), ...(str('args') ? [t().args(firstLine(str('args')))] : [])]
   if (e.tool === 'Agent') return [`${str('subagent_type') || 'general-purpose'}: ${str('description')}`]
   const { tool: _tool, tool_use_id: _id, agentId: _agent, ...input } = e
   const json = JSON.stringify(input)
@@ -190,11 +191,14 @@ async function setSteps($: $, change: (list: Step[]) => Step[]) {
   if (active !== before) await update($, scroll, () => ({ offset: 0, isFollowing: true }))
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  // Drawn in English unless the person picked another language in /config
+  setLanguage(options.language)
+
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'steps',
-      description: 'step-tracker band 표시/숨김 전환',
+      description: t().commandDescription,
       immediate: true,
     })
     const list = await read($, steps)
@@ -221,7 +225,7 @@ export const register: Register = on => {
     const isShowing = now === 'shown' || (now === 'auto' && (list.length > 0 || (await read($, turn)).isWorking))
     await update($, mode, () => (isShowing ? 'hidden' : 'shown'))
     // A toast, not a transcript row: the model never reads it
-    $.ui.toast(isShowing ? 'step-tracker 숨김 (/steps로 다시 표시)' : 'step-tracker 표시')
+    $.ui.toast(isShowing ? t().hidden : t().shown)
     return {}
   })
 
@@ -630,9 +634,9 @@ async function drawBand($: $, e: any, list: Step[], now: { isWorking: boolean; s
     const hidden = view.lines.length - shown.length
     listLines = [
       <Box flexDirection="row" width={inner} key="detail-title">
-        <Button key="close-detail" label="‹ 닫기" plain onPress={() => update($, detail, () => null)} />
+        <Button key="close-detail" label={t().close} plain onPress={() => update($, detail, () => null)} />
         <Text weight="semibold" wrap="truncate-end">
-          {'  ' + fitCells(view.title + (hidden > 0 ? `  (최근 ${shown.length}개)` : ''), inner - 8)}
+          {'  ' + fitCells(view.title + (hidden > 0 ? '  ' + t().latest(shown.length) : ''), inner - 8)}
         </Text>
       </Box>,
       ...shown.map((line, k) => (
@@ -644,7 +648,7 @@ async function drawBand($: $, e: any, list: Step[], now: { isWorking: boolean; s
   } else if (rows.length === 0) {
     listLines = [
       <Text key="list-empty" dimColor>
-        이번 턴의 호출이 여기에 쌓입니다
+        {t().listEmpty}
       </Text>,
     ]
   } else if (isPlanless) {
@@ -702,7 +706,7 @@ async function drawBand($: $, e: any, list: Step[], now: { isWorking: boolean; s
     </Box>
   ) : (
     <Text key="activity" dimColor>
-      {'· 대기 중'}
+      {t().idle}
     </Text>
   )
 
@@ -710,7 +714,7 @@ async function drawBand($: $, e: any, list: Step[], now: { isWorking: boolean; s
   const files = filesText(log)
   const statsLine = layout.hasStats ? (
     <Box flexDirection="row" width={inner} key="stats" overflow="hidden">
-      <Text dimColor>{'  이번 턴  '}</Text>
+      <Text dimColor>{'  ' + t().thisTurn + '  '}</Text>
       {...parts.flatMap((part, k) => [
         ...(k > 0 ? [<Text dimColor> · </Text>] : []),
         <Button key={'kind-' + part.kind} label={part.text} plain dimColor onPress={() => toggle('kind:' + part.kind)} />,

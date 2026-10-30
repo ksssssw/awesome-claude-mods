@@ -48,32 +48,27 @@ A mod's `name` is the slug people install it under. Once it is published, do not
 
 ## The local loop
 
-An installed mod runs from a copy in `~/.claude/plugins/cache/<marketplace>/<mod>/<version>/`, not from this folder. Editing a file here and running `/reload-plugins` loads the old copy again. Two ways to see your change:
-
-**Fast iteration**: turn off the installed copy in `/plugin` and start a session on the folder itself. It reloads on every save.
-
-```bash
-claude --plugin-dir mods/my-mod
-```
-
-**Through the installed copy**: add your clone as a marketplace once.
+Add your clone as a marketplace once and install from it:
 
 ```bash
 claude plugin marketplace add /path/to/awesome-claude-mods
 claude plugin install my-mod@awesome-claude-mods
 ```
 
-Then after each change:
+A marketplace that is a folder, with relative `source` paths like this one, is read from the folder itself. Edit a file, run `/reload-plugins`, and the session runs your change; `claude plugin list` shows `Read from:` with the folder. No version bump is needed while you work.
 
-1. Raise `version` in both `mods/my-mod/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`. With the same version, update keeps the old copy.
-2. Refresh the copy:
-   ```bash
-   claude plugin marketplace update awesome-claude-mods
-   claude plugin update my-mod@awesome-claude-mods
-   ```
-3. Run `/reload-plugins`, or restart Claude Code.
+For the fastest loop, start a session on the mod's folder instead. It reloads on every save. Turn the installed copy off in `/plugin` first, or the mod draws twice.
 
-`diff -rq ~/.claude/plugins/cache/awesome-claude-mods/my-mod/<version> mods/my-mod` prints nothing once the copy matches.
+```bash
+claude --plugin-dir mods/my-mod
+```
+
+People who install from GitHub run a copy made at install time. They receive a change only when its version is raised in both `mods/my-mod/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` and they run:
+
+```bash
+claude plugin marketplace update awesome-claude-mods
+claude plugin update my-mod@awesome-claude-mods
+```
 
 ## Checks
 

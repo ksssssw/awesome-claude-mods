@@ -31,7 +31,7 @@
 │   $ start the dev server ─ npm run dev                                    03:10 │
 ╰─────────────────────────────────────────────────────────────────────────────────╯
 ```
-<p align="center"><sub><a href="mods/step-tracker/README.ko.md">step-tracker</a>: Claude가 하는 일을 프롬프트 위에 보여 줍니다</sub></p>
+<p align="center"><sub><a href="mods/step-tracker/README.ko.md">step-tracker</a>: Claude가 하는 일을 프롬프트 위에 보여 줍니다 (<code>language: ko</code> 설정 화면)</sub></p>
 
 > [!WARNING]
 > mod는 Claude Code 세션 안에서 코드를 실행합니다. 설치하기 전에 소스를 읽어 보고, 믿을 수 있는 곳에서만 업데이트하세요.
@@ -89,7 +89,7 @@ claude plugin uninstall step-tracker@awesome-claude-mods
 
 | Mod | 하는 일 | 위치 | 토큰 | 버전 |
 | --- | --- | --- | --- | --- |
-| [step-tracker](mods/step-tracker/README.ko.md) | 계획 단계, 지금 하는 일, 방금 끝낸 호출, 걸어 다니는 캐릭터가 있는 실시간 활동 그래프, 백그라운드 에이전트와 셸, 브랜치를 테두리 상자 하나에 보여 줍니다 | 프롬프트 위 band | 0 | 0.6.0 |
+| [step-tracker](mods/step-tracker/README.ko.md) | 계획 단계, 지금 하는 일, 방금 끝낸 호출, 걸어 다니는 캐릭터가 있는 실시간 활동 그래프, 백그라운드 에이전트와 셸, 브랜치를 테두리 상자 하나에 보여 줍니다 | 프롬프트 위 band | 0 | 0.7.0 |
 
 ## 원칙
 
@@ -111,7 +111,7 @@ awesome-claude-mods/
 
 ## mod 만들기
 
-`template/`을 `mods/<name>/`으로 복사하고, `.claude-plugin/marketplace.json`에 등록한 뒤 `scripts/check.sh`를 실행합니다. 자세한 내용은 [CONTRIBUTING.ko.md](CONTRIBUTING.ko.md)에 있습니다. 설치된 mod가 버전을 올리기 전까지 수정 내용을 반영하지 않는 이유도 거기에 설명되어 있습니다.
+`template/`을 `mods/<name>/`으로 복사하고, `.claude-plugin/marketplace.json`에 등록한 뒤 `scripts/check.sh`를 실행합니다. 자세한 내용은 [CONTRIBUTING.ko.md](CONTRIBUTING.ko.md)에 있습니다. 수정 내용이 설치된 mod에 반영되는 방식도 거기에 설명되어 있습니다.
 
 ## 라이선스
 

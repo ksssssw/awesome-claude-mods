@@ -1,5 +1,6 @@
 // Pure logic of the band: no `$`, so the tests call it directly
 import type { AgentRow, Scroll, ShellRow, Step, StepStatus } from '../types'
+import { t } from './i18n'
 
 export type Todo = { content: string; status: StepStatus }
 
@@ -250,7 +251,7 @@ export function isGraphShown(wasShown: boolean, columns: number): boolean {
 export function agentText(agent: AgentRow): string {
   const head = `${agent.label} · ${agent.where}`
   const task = agent.task ? `  ${agent.task}` : ''
-  const doing = agent.doing ? ` ─ ${agent.doing}` : ' ─ 시작 중'
+  const doing = ` ─ ${agent.doing ?? t().agentStarting}`
   const calls = agent.calls ? ` (${agent.calls})` : ''
   return head + task + doing + calls
 }
@@ -269,25 +270,25 @@ export function activityText(phase: Phase, permission: string): string {
   const isPlan = permission === 'plan'
   switch (phase.kind) {
     case 'waiting':
-      return isPlan ? '계획 세우는 중' : '응답 기다리는 중'
+      return t().waiting(isPlan)
     case 'thinking':
-      return isPlan ? '계획 구상 중' : '생각하는 중'
+      return t().thinking(isPlan)
     case 'writing':
-      return '답변 쓰는 중'
+      return t().writing
     case 'preparing':
-      return EDIT_TOOLS.has(phase.tool) ? '변경 내용 작성 중' : `${phase.tool} 호출 준비 중`
+      return EDIT_TOOLS.has(phase.tool) ? t().preparingEdit : t().preparing(phase.tool)
     case 'tool': {
       const { tool, target } = phase
-      if (tool === 'Read') return `${target} 읽는 중`
-      if (EDIT_TOOLS.has(tool)) return `${target} 수정 중`
-      if (tool === 'Bash') return `${target} 실행 중`
-      if (SEARCH_TOOLS.has(tool)) return `'${target}' 찾는 중`
-      if (tool === 'Agent') return `에이전트에 맡기는 중: ${target}`
-      if (tool === 'WebFetch' || tool === 'WebSearch') return `웹에서 찾는 중: ${target}`
-      if (tool === 'ExitPlanMode') return '계획 승인 기다리는 중'
-      if (tool === 'AskUserQuestion') return '답변 기다리는 중'
-      if (tool === 'TodoWrite' || tool.startsWith('Task')) return '단계 목록 정리 중'
-      return target ? `${tool} 실행 중: ${target}` : `${tool} 실행 중`
+      if (tool === 'Read') return t().reading(target)
+      if (EDIT_TOOLS.has(tool)) return t().editing(target)
+      if (tool === 'Bash') return t().running(target)
+      if (SEARCH_TOOLS.has(tool)) return t().searching(target)
+      if (tool === 'Agent') return t().delegating(target)
+      if (tool === 'WebFetch' || tool === 'WebSearch') return t().browsing(target)
+      if (tool === 'ExitPlanMode') return t().awaitingApproval
+      if (tool === 'AskUserQuestion') return t().awaitingAnswer
+      if (tool === 'TodoWrite' || tool.startsWith('Task')) return t().updatingPlan
+      return t().runningTool(tool, target)
     }
   }
 }
@@ -295,14 +296,8 @@ export function activityText(phase: Phase, permission: string): string {
 // The kinds a turn's calls are counted by
 export type CallKind = 'read' | 'edit' | 'run' | 'search' | 'skill' | 'other'
 
-const KIND_NAMES: Record<CallKind, string> = {
-  read: '읽기',
-  edit: '수정',
-  run: '명령',
-  search: '검색',
-  skill: '스킬',
-  other: '기타',
-}
+// The kinds in the order the counts list them
+const KINDS: CallKind[] = ['read', 'edit', 'run', 'search', 'skill', 'other']
 
 export function callKind(tool: string): CallKind {
   if (tool === 'Read') return 'read'
@@ -327,11 +322,11 @@ export type CallEntry = {
 
 export type StatPart = { kind: CallKind; text: string }
 
-// `읽기 6`, `수정 3`, ... for the kinds the turn used, in a fixed order
+// `read 6`, `edit 3`, ... for the kinds the turn used, in a fixed order
 export function statParts(log: readonly CallEntry[]): StatPart[] {
-  return (Object.keys(KIND_NAMES) as CallKind[]).flatMap(kind => {
+  return KINDS.flatMap(kind => {
     const n = log.filter(entry => entry.kind === kind).length
-    return n ? [{ kind, text: `${KIND_NAMES[kind]} ${n}` }] : []
+    return n ? [{ kind, text: `${t().kinds[kind]} ${n}` }] : []
   })
 }
 
@@ -345,9 +340,9 @@ export function filesText(log: readonly CallEntry[]): string {
 
 // How a call went: running for so long, done in so long, or failed
 export function callStatus(entry: CallEntry, now: number): string {
-  if (entry.endedAt === undefined) return `실행 중 ${formatDuration(now - entry.startedAt)}`
+  if (entry.endedAt === undefined) return t().callRunning(formatDuration(now - entry.startedAt))
   const took = formatDuration(entry.endedAt - entry.startedAt)
-  return entry.isError ? `오류 ${took}` : `완료 ${took}`
+  return entry.isError ? t().callFailed(took) : t().callDone(took)
 }
 
 // What the band shows in place of the list once something is pressed: a title and its lines
@@ -368,7 +363,7 @@ export function detailView(
     const entries = log.filter(item => item.kind === id)
     if (entries.length === 0) return null
     return {
-      title: `${KIND_NAMES[id as CallKind]} ${entries.length} ─ 이번 턴`,
+      title: t().thisTurnTitle(t().kinds[id as CallKind], entries.length),
       lines: entries.map(item => `${item.label}  (${callStatus(item, now)})`),
     }
   }
@@ -376,8 +371,8 @@ export function detailView(
     const shell = shells.find(item => item.id === id)
     if (!shell) return null
     return {
-      title: `백그라운드 셸 ─ 실행 중 ${formatDuration(now - shell.startedAt)}`,
-      lines: [shell.label, '$ ' + shell.command, `작업 ID: ${shell.id}`].filter(line => line && line !== '$ '),
+      title: t().shellTitle(formatDuration(now - shell.startedAt)),
+      lines: [shell.label, '$ ' + shell.command, t().taskId(shell.id)].filter(line => line && line !== '$ '),
     }
   }
   if (what === 'agent') {
@@ -386,8 +381,8 @@ export function detailView(
     const age = agent.startedAt === undefined ? '' : ` · ${formatDuration(now - agent.startedAt)}`
     const calls = agentCalls.get(id) ?? []
     return {
-      title: `${agent.label} · ${agent.where}${age} ─ 호출 ${agent.calls ?? calls.length}회`,
-      lines: [...(agent.task ? [`작업: ${agent.task}`] : []), ...(calls.length > 0 ? calls : ['아직 도구 호출 없음'])],
+      title: `${agent.label} · ${agent.where}${age} ─ ${t().agentTitle(agent.calls ?? calls.length)}`,
+      lines: [...(agent.task ? [t().task(agent.task)] : []), ...(calls.length > 0 ? calls : [t().noCallsYet])],
     }
   }
   return null
@@ -414,8 +409,7 @@ export function mix(a: number, b: number, t: number): number {
 
 // What the activity line says once the turn is over and only background work runs
 export function backgroundText(agentCount: number, shellCount: number): string {
-  const parts = [agentCount ? `에이전트 ${agentCount}개` : '', shellCount ? `셸 ${shellCount}개` : ''].filter(Boolean)
-  return `백그라운드 ${parts.join(' · ')} 작업 중`
+  return t().background(agentCount, shellCount)
 }
 
 // The tasks a notification reports as ended: each <task-id> with the <status> after it

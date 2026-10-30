@@ -22,6 +22,7 @@ import {
   parseWorktrees,
   windowOffset,
 } from '../hooks/model'
+import { setLanguage } from '../hooks/i18n'
 import { MASCOT_WIDTH, activityCells, bucketCalls, mascotColumn, timelineCells } from '../hooks/timeline'
 
 const todo = (content: string, status: 'pending' | 'in_progress' | 'completed') => ({ content, status })
@@ -83,23 +84,23 @@ test('git output is read for branch, ahead count, changes and worktrees', async 
 test('times and agents read short', async () => {
   expect(formatDuration(75_000)).toBe('01:15')
   expect(formatDuration(3_725_000)).toBe('1:02:05')
-  expect(agentText({ id: 'a', label: 'explore', where: 'main' })).toBe('explore · main ─ 시작 중')
+  expect(agentText({ id: 'a', label: 'explore', where: 'main' })).toBe('explore · main ─ starting')
   const busy = { id: 'a', label: 'explore', where: 'main', task: 'search code', doing: 'Grep render', calls: 4 }
   expect(agentText(busy)).toBe('explore · main  search code ─ Grep render (4)')
 })
 
 test('with no step, the note leads and each agent gets a row', async () => {
   const agents = ['a', 'b'].map(id => ({ id, label: id, where: 'main' }))
-  const rows = buildRows([], [{ label: 'Read a.ts' }], agents, { text: '계획 세우는 중' }, [{ kind: 'read', text: '읽기 1' }])
+  const rows = buildRows([], [{ label: 'Read a.ts' }], agents, { text: 'Planning' }, [{ kind: 'read', text: 'read 1' }])
   expect(rows.map(row => row.kind)).toEqual(['call', 'note', 'stats', 'agent', 'agent'])
 })
 
 test('the activity line names what the main loop does, as planning in plan mode', async () => {
-  expect(activityText({ kind: 'waiting' }, 'plan')).toBe('계획 세우는 중')
-  expect(activityText({ kind: 'thinking' }, 'default')).toBe('생각하는 중')
-  expect(activityText({ kind: 'preparing', tool: 'Edit' }, 'default')).toBe('변경 내용 작성 중')
-  expect(activityText({ kind: 'tool', tool: 'Edit', target: 'App.swift' }, 'default')).toBe('App.swift 수정 중')
-  expect(activityText({ kind: 'tool', tool: 'Bash', target: '브랜치 만들기' }, 'default')).toBe('브랜치 만들기 실행 중')
+  expect(activityText({ kind: 'waiting' }, 'plan')).toBe('Planning')
+  expect(activityText({ kind: 'thinking' }, 'default')).toBe('Thinking')
+  expect(activityText({ kind: 'preparing', tool: 'Edit' }, 'default')).toBe('Writing a change')
+  expect(activityText({ kind: 'tool', tool: 'Edit', target: 'App.swift' }, 'default')).toBe('Editing App.swift')
+  expect(activityText({ kind: 'tool', tool: 'Bash', target: 'make a branch' }, 'default')).toBe('Running: make a branch')
 })
 
 test('the turn is counted by kind, with the files it changed, and each count opens its calls', async () => {
@@ -122,19 +123,19 @@ test('the turn is counted by kind, with the files it changed, and each count ope
     entry('7', 'Skill'),
   ]
   expect(statParts([])).toEqual([])
-  expect(statParts(log).map(part => part.text)).toEqual(['읽기 1', '수정 4', '명령 1', '스킬 1'])
+  expect(statParts(log).map(part => part.text)).toEqual(['read 1', 'edit 4', 'run 1', 'skill 1'])
   expect(filesText(log)).toBe('b.swift, c.swift +1')
   const view = detailView('kind:edit', log, [], new Map(), 5000)
-  expect(view?.title).toBe('수정 4 ─ 이번 턴')
-  expect(view?.lines[0]).toBe('Edit a.swift  (완료 00:02)')
+  expect(view?.title).toBe('edit 4 ─ this turn')
+  expect(view?.lines[0]).toBe('Edit a.swift  (done 00:02)')
   expect(detailView('call:6', [{ ...entry('6', 'Bash'), endedAt: undefined }], [], new Map(), 3000)?.title).toBe(
-    'Bash ─ 실행 중 00:03',
+    'Bash ─ running 00:03',
   )
   const agents = [{ id: 'ag', label: 'explore', where: 'main', task: 'explore', calls: 2, startedAt: 0 }]
   const calls = new Map([['ag', ['Grep render', 'Read a.swift']]])
   expect(detailView('agent:ag', [], agents, calls, 65_000)).toEqual({
-    title: 'explore · main · 01:05 ─ 호출 2회',
-    lines: ['작업: explore', 'Grep render', 'Read a.swift'],
+    title: 'explore · main · 01:05 ─ 2 calls',
+    lines: ['Task: explore', 'Grep render', 'Read a.swift'],
   })
   expect(detailView('agent:gone', [], agents, calls, 0)).toBeNull()
 })
@@ -205,7 +206,23 @@ test('a notification names the tasks it ended, and the line counts what still ru
     { id: 'b1', status: 'completed' },
     { id: 'b2', status: 'failed' },
   ])
-  expect(endedTasks('그냥 메시지')).toEqual([])
-  expect(backgroundText(1, 2)).toBe('백그라운드 에이전트 1개 · 셸 2개 작업 중')
-  expect(backgroundText(0, 1)).toBe('백그라운드 셸 1개 작업 중')
+  expect(endedTasks('just a message')).toEqual([])
+  expect(backgroundText(1, 2)).toBe('Background: 1 agent · 2 shells running')
+  expect(backgroundText(0, 1)).toBe('Background: 1 shell running')
+})
+
+test('the language option switches every phrase to Korean and back', async () => {
+  setLanguage('ko')
+  try {
+    expect(agentText({ id: 'a', label: 'explore', where: 'main' })).toBe('explore · main ─ 시작 중')
+    expect(activityText({ kind: 'waiting' }, 'plan')).toBe('계획 세우는 중')
+    expect(activityText({ kind: 'tool', tool: 'Edit', target: 'App.swift' }, 'default')).toBe('App.swift 수정 중')
+    expect(backgroundText(1, 2)).toBe('백그라운드 에이전트 1개 · 셸 2개 작업 중')
+  } finally {
+    setLanguage('en')
+  }
+  // Anything but ko draws in English
+  setLanguage('fr')
+  expect(activityText({ kind: 'thinking' }, 'default')).toBe('Thinking')
+  setLanguage(undefined)
 })

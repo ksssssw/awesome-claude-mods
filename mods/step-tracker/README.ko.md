@@ -67,6 +67,20 @@ Claude Code 프롬프트 바로 위에 테두리 상자(band)를 띄워 Claude�
 - 마우스 클릭은 fullscreen 화면(`"tui": "fullscreen"`)에서 됩니다. 키보드로는 Ctrl+X Tab으로 band에 포커스를 준 뒤 항목에서 Enter를 누릅니다.
 - `/steps`로 band를 강제로 켜고 끕니다.
 
+## 설정
+
+| 옵션 | 값 | 기본값 |
+| --- | --- | --- |
+| `language` | `en` 영어, `ko` 한국어 | `en` |
+
+화면 문구는 기본이 영어입니다. 한국어로 보려면 Claude Code에서 `/plugin configure step-tracker@awesome-claude-mods`로 바꾸거나, 셸에서 다음을 실행합니다.
+
+```bash
+echo '{"language":"ko"}' | claude plugin configure step-tracker@awesome-claude-mods --values-stdin
+```
+
+바꾼 뒤 Claude Code를 재시작하면 적용됩니다. 아래 예시 화면은 `ko`로 설정했을 때의 모습입니다.
+
 ## 동작 규칙
 
 - band 높이는 12줄로 고정입니다(화면이 작으면 더 작게). 에이전트나 셸이 생기면 목록 영역이 줄어들어 전체 높이는 변하지 않습니다.
@@ -78,7 +92,6 @@ Claude Code 프롬프트 바로 위에 테두리 상자(band)를 띄워 Claude�
 
 ## 알려진 제약
 
-- 화면 문구는 지금 한국어입니다. 영어 옵션을 추가할 예정입니다.
 - plan 모드는 다른 플러그인이 가로챌 수 있는 이벤트로 판단합니다. 설치된 플러그인 중 그 이벤트를 넘기지 않는 것이 있으면 `EnterPlanMode`·`ExitPlanMode` 호출로만 plan 모드를 알아챕니다.
 - 백그라운드 셸 줄은 완료 알림이 와야 사라집니다. 알림이 세션에 오지 않으면 `/clear` 전까지 남습니다.
 - 상자 문자와 블록 문자가 한 칸 폭인 글꼴을 기준으로 합니다.
@@ -87,7 +100,7 @@ Claude Code 프롬프트 바로 위에 테두리 상자(band)를 띄워 Claude�
 
 ```bash
 claude plugin validate mods/step-tracker --profile directory
-claude plugin test mods/step-tracker        # 테스트 25개
+claude plugin test mods/step-tracker        # 테스트 27개
 claude --plugin-dir mods/step-tracker       # 이 폴더를 직접 로드, 저장하면 다시 로드
 ```
 
