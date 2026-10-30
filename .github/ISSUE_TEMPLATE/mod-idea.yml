@@ -1,0 +1,21 @@
+name: Mod idea
+description: Suggest a new mod or a change to one
+labels: [idea]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What should it show or change?
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where would it live?
+      options: [Band above the prompt, Pane beside the chat, Status line, Slash command, Tool-call hook, Not sure]
+  - type: checkboxes
+    id: tokens
+    attributes:
+      label: Tokens
+      options:
+        - label: It can work without calling a model or adding to what Claude reads

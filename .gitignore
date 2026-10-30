@@ -1,0 +1,6 @@
+.DS_Store
+node_modules/
+# Types the engine writes into a loaded mod's folder
+**/.claude-plugin/types/
+# A local list of strings that must never be published (see CONTRIBUTING.md)
+forbidden.txt
