@@ -25,6 +25,25 @@
         "terminal-ui"
       ],
       "source": "./mods/step-tracker"
+    },
+    {
+      "name": "android-logcat",
+      "displayName": "Android Logcat",
+      "description": "A pane that follows the connected Android device's logcat for the app of the current repo, colored by level like Android Studio, with a level floor and a text filter; /logcat turns it on and off.",
+      "version": "0.1.0",
+      "author": {
+        "name": "ksssssw",
+        "url": "https://github.com/ksssssw"
+      },
+      "category": "development",
+      "keywords": [
+        "android",
+        "logcat",
+        "adb",
+        "pane",
+        "terminal-ui"
+      ],
+      "source": "./mods/android-logcat"
     }
   ]
 }

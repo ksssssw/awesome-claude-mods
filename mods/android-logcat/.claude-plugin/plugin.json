@@ -1,0 +1,44 @@
+{
+  "name": "android-logcat",
+  "version": "0.1.0",
+  "description": "A pane that follows the connected Android device's logcat for the app of the current repo, colored by level like Android Studio, with a level floor and a text filter; /logcat turns it on and off.",
+  "author": { "name": "ksssssw", "url": "https://github.com/ksssssw" },
+  "homepage": "https://github.com/ksssssw/awesome-claude-mods/tree/main/mods/android-logcat",
+  "repository": "https://github.com/ksssssw/awesome-claude-mods",
+  "license": "MIT",
+  "keywords": ["android", "logcat", "adb", "pane", "terminal-ui"],
+  "userConfig": {
+    "package": {
+      "type": "string",
+      "title": "Package",
+      "description": "The app to follow. Empty: the applicationId of the build.gradle in the working directory.",
+      "default": ""
+    },
+    "serial": {
+      "type": "string",
+      "title": "Device serial",
+      "description": "Which device when several are connected (adb devices). Empty: the first one.",
+      "default": ""
+    },
+    "rows": {
+      "type": "number",
+      "title": "Rows",
+      "description": "How tall the pane is when it sits above the prompt (narrow terminals).",
+      "default": 20
+    },
+    "bufferLines": {
+      "type": "number",
+      "title": "Buffer lines",
+      "description": "How many lines are kept for the pane and for the logcat_read tool.",
+      "default": 2000
+    },
+    "language": {
+      "type": "string",
+      "title": "Language",
+      "description": "The language the pane draws in: en (English) or ko (Korean).",
+      "default": "en",
+      "options": ["en", "ko"]
+    }
+  },
+  "types": "./types/index.d.ts"
+}
