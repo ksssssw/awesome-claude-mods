@@ -84,7 +84,7 @@ Restart Claude Code to apply them.
 
 ```bash
 claude plugin validate mods/android-logcat --profile directory
-claude plugin test mods/android-logcat        # 16 tests
+claude plugin test mods/android-logcat        # 21 tests
 claude --plugin-dir mods/android-logcat       # load this folder directly, reloading on save
 ```
 

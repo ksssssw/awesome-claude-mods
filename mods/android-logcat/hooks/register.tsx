@@ -4,7 +4,8 @@ import type { EngineInterface, Register, Timer } from 'claude-code'
 import { detectApplicationId, findAdb, listDevices, pidOf, resolvePackage } from './adb'
 import { setLanguage, t } from './i18n'
 import type { LinesProps } from './lines'
-import { asLevel, clampInt, formatLine, LEVEL_OPTIONS, logcatArgv, parseLine, RingBuffer, splitLines, styleOf, tail } from './model'
+import { line } from './line'
+import { asLevel, clampInt, formatLine, isPackageName, LEVEL_OPTIONS, logcatArgv, parseLine, RingBuffer, splitLines, stampOf, tail } from './model'
 import type { Entry, Level } from './model'
 
 const PLUGIN = 'android-logcat'
@@ -37,13 +38,21 @@ const scroll = atom({ plugin: 'android-logcat', key: 'scroll' } as const, 0)
 type Status =
   | { kind: 'off' | 'starting' | 'no-adb' | 'no-device' }
   | { kind: 'not-installed'; package: string }
-  | { kind: 'reconnecting'; package: string }
+  | { kind: 'reconnecting'; package: string; reason?: string }
+  | { kind: 'error'; reason: string }
   | { kind: 'live'; package: string; isAll: boolean; candidates: number; uid?: number; pid?: number; serial: string; model?: string }
 
 type Capture = {
   controller: AbortController
   // The running child's stream, so a stop ends it even while no line arrives
   stream?: AsyncGenerator<unknown, unknown>
+  // Found once per capture: the adb to run and the repo's app (null: looked, none)
+  adb?: string
+  base?: string | null
+  // Set once a `--uid` child ended without a line: the device refuses it, so the pid path is taken
+  avoidUid: boolean
+  // The newest line's stamp, where a reconnect resumes from instead of the backlog
+  lastStamp?: string
 }
 
 // Lost on a reload: the capture restarts and asks adb for its backlog again
@@ -54,6 +63,10 @@ let status: Status = { kind: 'off' }
 let isDirty = false
 let isPausedNow = false
 let frozen: readonly Entry[] = []
+// What the pane shows while scrolled up: a snapshot, so the rows under the person's eyes stay put
+let held: readonly Entry[] | undefined
+// Lines that arrived while `held` stood
+let arrivedSinceHeld = 0
 let capture: Capture | undefined
 let isToolRegistered = false
 let lastStatusLine: string | undefined
@@ -65,20 +78,26 @@ function setStatus(next: Status) {
   isDirty = true
 }
 
-function ingest(line: string) {
-  const entry = parseLine(line)
-  if (!entry) return
+function ingest(entry: Entry) {
   buffer.push(entry)
   if (entry.level === 'E' || entry.level === 'F') counts.errors++
   else if (entry.level === 'W') counts.warnings++
+  if (held) arrivedSinceHeld++
   isDirty = true
 }
 
 function clear() {
   buffer.clear()
   frozen = []
+  held = undefined
+  arrivedSinceHeld = 0
   counts = { errors: 0, warnings: 0 }
   isDirty = true
+}
+
+// The lines the pane draws from: the pause's snapshot, else the scroll's, else the live buffer
+function viewed(): readonly Entry[] {
+  return isPausedNow ? frozen : (held ?? buffer.toArray())
 }
 
 function stopCapture() {
@@ -90,7 +109,7 @@ function stopCapture() {
 
 function startCapture($: EngineInterface) {
   stopCapture()
-  const self: Capture = { controller: new AbortController() }
+  const self: Capture = { controller: new AbortController(), avoidUid: false }
   capture = self
   setStatus({ kind: 'starting' })
   void run($, self)
@@ -105,12 +124,15 @@ async function run($: EngineInterface, self: Capture) {
       () => signal.aborted,
     )
 
-  try {
-    while (!signal.aborted) {
+  while (!signal.aborted) {
+    try {
       if (!(await step($, self, sleep))) return
+    } catch (error) {
+      // A call on `$` failed (the engine busy, a refused read): say so and try again
+      if (signal.aborted) return
+      setStatus({ kind: 'error', reason: error instanceof Error ? error.message : String(error) })
+      if (!(await sleep(RETRY_MS))) return
     }
-  } catch {
-    // The module unloaded or the engine refused a call: nothing left to follow
   }
 }
 
@@ -119,12 +141,13 @@ type Sleep = (ms: number) => Promise<boolean>
 // One pass: find adb, a device and the app, then follow logcat until the child ends. False ends the loop.
 async function step($: EngineInterface, self: Capture, sleep: Sleep): Promise<boolean> {
   const { signal } = self.controller
-  const adb = await findAdb($)
+  const adb = self.adb ?? (await findAdb($))
   if (signal.aborted) return false
   if (!adb) {
     setStatus({ kind: 'no-adb' })
     return sleep(RETRY_MS)
   }
+  self.adb = adb
 
   const devices = await listDevices($, adb)
   const device = options.serial ? devices.find(d => d.serial === options.serial) : devices[0]
@@ -133,12 +156,15 @@ async function step($: EngineInterface, self: Capture, sleep: Sleep): Promise<bo
     return sleep(RETRY_MS)
   }
 
-  const base = (await read($, override)) ?? (options.package || undefined) ?? (await detectApplicationId($, await $.session.cwd()))
+  if (self.base === undefined) {
+    self.base = (await read($, override)) ?? (options.package || undefined) ?? (await detectApplicationId($, await $.session.cwd())) ?? null
+  }
+  const base = self.base ?? undefined
   let spec: { uid?: number; pid?: number } = {}
   let pkg = base
   let candidates = 0
   if (base) {
-    const picked = await resolvePackage($, adb, device.serial, base)
+    const picked = self.avoidUid ? undefined : await resolvePackage($, adb, device.serial, base)
     if (picked) {
       pkg = picked.chosen.name
       candidates = picked.candidates.length
@@ -155,7 +181,9 @@ async function step($: EngineInterface, self: Capture, sleep: Sleep): Promise<bo
   if (signal.aborted) return false
 
   setStatus({ kind: 'live', package: pkg ?? '', isAll: !pkg, candidates, ...spec, serial: device.serial, model: device.model })
-  const stream = $.process.spawn({ argv: logcatArgv(adb, device.serial, spec, BACKLOG) })
+  // The first child brings a backlog; a later one resumes where the last line left off, so nothing is read twice
+  const resumeFrom = self.lastStamp
+  const stream = $.process.spawn({ argv: logcatArgv(adb, device.serial, spec, resumeFrom ?? BACKLOG) })
   self.stream = stream
 
   // A pid changes when the app restarts: end this child so the loop resolves it again
@@ -170,30 +198,50 @@ async function step($: EngineInterface, self: Capture, sleep: Sleep): Promise<bo
   }
 
   let carry = ''
+  let stderr = ''
+  let sawLine = false
   try {
     for await (const chunk of stream) {
       if (signal.aborted) break
-      if (chunk.stream !== 'stdout') continue
+      if (chunk.stream === 'stderr') {
+        stderr = (stderr + chunk.text).slice(-300)
+        continue
+      }
       const split = splitLines(carry, chunk.text)
       carry = split.carry
-      for (const line of split.lines) ingest(line)
+      for (const text of split.lines) {
+        const entry = parseLine(text)
+        if (!entry) continue
+        sawLine = true
+        const stamp = stampOf(entry)
+        // `-T <stamp>` repeats the line at that moment: skip what was already read
+        if (resumeFrom !== undefined && stamp <= resumeFrom) continue
+        self.lastStamp = stamp
+        ingest(entry)
+      }
     }
-  } catch {
-    // adb could not start or died: the loop below decides what to do
+  } catch (error) {
+    stderr = error instanceof Error ? error.message : String(error)
   } finally {
     poll?.cancel()
     self.stream = undefined
   }
   if (signal.aborted) return false
-  setStatus({ kind: 'reconnecting', package: pkg ?? '' })
+  // A `--uid` child that printed nothing was refused (an old logcat): follow the pid from here on
+  if (spec.uid !== undefined && !sawLine) self.avoidUid = true
+  const reason = stderr.trim().split('\n').pop()
+  setStatus({ kind: 'reconnecting', package: pkg ?? '', reason: reason || undefined })
   return sleep(RETRY_MS / 2)
 }
 
 type Scroll = 'up' | 'down' | 'pageup' | 'pagedown' | 'oldest' | 'newest'
 
-async function scrollBy($: EngineInterface, kind: Scroll | number, total: number) {
+// Moves the view; leaving the end holds a snapshot so the rows stay put, and reaching it again follows the live lines
+async function scrollBy($: EngineInterface, kind: Scroll | number) {
   const page = Math.max(1, lastRoom - 1)
+  const total = await visibleNow($)
   const max = Math.max(0, total - lastRoom)
+  let landed = 0
   await update($, scroll, offset => {
     const next =
       typeof kind === 'number' ? offset - kind
@@ -203,8 +251,17 @@ async function scrollBy($: EngineInterface, kind: Scroll | number, total: number
       : kind === 'pagedown' ? offset - page
       : kind === 'oldest' ? max
       : 0
-    return Math.min(max, Math.max(0, next))
+    landed = Math.min(max, Math.max(0, next))
+    return landed
   })
+  if (landed > 0 && held === undefined) {
+    held = buffer.toArray().slice()
+    arrivedSinceHeld = 0
+  } else if (landed === 0 && held !== undefined) {
+    held = undefined
+    arrivedSinceHeld = 0
+    isDirty = true
+  }
 }
 
 async function visibleNow($: EngineInterface): Promise<number> {
@@ -212,7 +269,7 @@ async function visibleNow($: EngineInterface): Promise<number> {
 }
 
 function visibleCount(min: Level, text: string): number {
-  return tail(isPausedNow ? frozen : buffer.toArray(), min, text, SCROLLBACK).length
+  return tail(viewed(), min, text, SCROLLBACK).length
 }
 
 async function ensureTool($: EngineInterface) {
@@ -239,6 +296,9 @@ async function turnOn($: EngineInterface) {
   await ensureTool($)
   $.ui.invalidate('tool.describe')
   clear()
+  isPausedNow = false
+  await update($, isPaused, () => false)
+  await update($, scroll, () => 0)
   startCapture($)
   await $.ui.open({ id: PANE, title: t().paneTitle, rows: options.rows })
 }
@@ -270,7 +330,9 @@ function statusText(): { text: string; color: string } {
     case 'starting':
       return { text: t().starting, color: 'warning' }
     case 'reconnecting':
-      return { text: t().reconnecting, color: 'warning' }
+      return { text: status.reason ? `${t().reconnecting}: ${status.reason}` : t().reconnecting, color: 'warning' }
+    case 'error':
+      return { text: t().error(status.reason), color: 'error' }
     case 'no-adb':
       return { text: t().noAdb, color: 'error' }
     case 'no-device':
@@ -285,7 +347,7 @@ function statusText(): { text: string; color: string } {
 export const register: Register = (on, opts) => {
   setLanguage(opts.language)
   options = {
-    package: typeof opts.package === 'string' ? opts.package.trim() : '',
+    package: typeof opts.package === 'string' && isPackageName(opts.package.trim()) ? opts.package.trim() : '',
     serial: typeof opts.serial === 'string' ? opts.serial.trim() : '',
     rows: clampInt(opts.rows, 20, 5, 200),
     bufferLines: clampInt(opts.bufferLines, 2000, 100, 50_000),
@@ -334,6 +396,7 @@ export const register: Register = (on, opts) => {
       return { text: t().cleared }
     }
     if (arg !== '') {
+      if (!isPackageName(arg)) return { text: t().badPackage(arg) }
       await update($, override, () => arg)
       await turnOn($)
       return { text: t().turnedOn(arg) }
@@ -356,13 +419,13 @@ export const register: Register = (on, opts) => {
   // The lines region posts the keys it got; the buttons do the same through scrollBy
   on('ui.message', { element: 'lines' }, async ($, e) => {
     const data = e.data as { scroll?: Scroll } | null
-    if (data?.scroll) await scrollBy($, data.scroll, await visibleNow($))
+    if (data?.scroll) await scrollBy($, data.scroll)
     return {}
   })
 
   // The wheel and the scroll keys over the pane move the lines, not the window: the header stays put
   on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    if (e.origin.kind === 'person' && e.by !== 0) await scrollBy($, e.by, await visibleNow($))
+    if (e.origin.kind === 'person' && e.by !== 0) await scrollBy($, e.by)
     return {}
   }).catch(() => ({}))
 
@@ -392,16 +455,18 @@ export const register: Register = (on, opts) => {
     const min = asLevel(await read($, level), 'D')
     const text = await read($, filter)
     const paused = await read($, isPaused)
-    const entries = paused ? frozen : buffer.toArray()
-    const shown = tail(entries, min, text, SCROLLBACK)
+    const shown = tail(viewed(), min, text, SCROLLBACK)
     // Header, controls and filter take three rows; the lines get the rest
     const room = Math.max(1, (e.props.scroll?.bodyRows ?? options.rows) - 3)
     lastRoom = room
     const offset = Math.min(await read($, scroll), Math.max(0, shown.length - room))
-    const scrollTo = (kind: Scroll) => void scrollBy($, kind, shown.length)
+    const scrollTo = (kind: Scroll) => void scrollBy($, kind)
     const state = statusText()
     const pkg = packageLabel()
-    const extra = status.kind === 'live' ? [status.candidates > 1 ? t().oneOf(status.package, status.candidates) : '', status.model, status.uid !== undefined ? `uid ${status.uid}` : status.pid !== undefined ? `pid ${status.pid}` : ''].filter(Boolean).join(' · ') : ''
+    const extra =
+      status.kind === 'live'
+        ? [status.model, status.uid !== undefined ? `uid ${status.uid}` : status.pid !== undefined ? `pid ${status.pid}` : ''].filter(Boolean).join(' · ')
+        : ''
 
     const togglePause = async () => {
       const next = !(await read($, isPaused))
@@ -458,7 +523,7 @@ export const register: Register = (on, opts) => {
           </Box>
         )}
         {Client ? (
-          <Client key="lines" module="./lines.tsx" height={room} props={linesProps(shown, offset, room)} />
+          <Client key="lines" module="./lines.tsx" height={room} props={linesProps(shown, offset, room, arrivedSinceHeld)} />
         ) : (
           <Box flexDirection="column">
             {shown.length === 0 && <Text dimColor>{t().empty}</Text>}
@@ -470,26 +535,6 @@ export const register: Register = (on, opts) => {
   })
 }
 
-function linesProps(lines: Entry[], offset: number, rows: number): LinesProps {
-  return { lines, offset, rows, empty: t().empty, newer: t().newerLines }
-}
-
-type TextLike = ReturnType<EngineInterface['ui']['resolve']>['Text']
-
-// One log line: time dim; W/E/F whole in their color, V/D/I only the level and the tag
-function line(entry: Entry, Text: TextLike) {
-  const style = styleOf(entry.level)
-  const head = `${entry.level}/${entry.tag}:`
-  if (style.isWhole) {
-    return (
-      <Text color={style.color} bold={style.isBold} wrap="truncate-end">
-        <Text dimColor>{entry.time}</Text>  {head} {entry.message}
-      </Text>
-    )
-  }
-  return (
-    <Text wrap="truncate-end">
-      <Text dimColor>{entry.time}</Text>  <Text color={style.color} dimColor={style.isDim}>{head}</Text> {entry.message}
-    </Text>
-  )
+function linesProps(lines: Entry[], offset: number, rows: number, newerCount: number): LinesProps {
+  return { lines, offset, rows, newerCount, empty: t().empty, newer: t().newerLines }
 }

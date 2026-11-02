@@ -2,7 +2,7 @@
 // and turns the keys it gets (after a click gives it the focus) into scroll requests for the hooks module.
 import type { ClientModule } from 'claude-code'
 
-import { styleOf } from './model'
+import { line } from './line'
 import type { Entry } from './model'
 
 export type LinesProps = {
@@ -11,6 +11,8 @@ export type LinesProps = {
   offset: number
   // The rows the hooks module laid the region out with, for before the surface reports its own
   rows: number
+  // Lines that arrived since the view was held by scrolling up; told with the offset
+  newerCount: number
   empty: string
   newer: string
 }
@@ -46,28 +48,8 @@ const Lines: ClientModule<LinesProps, State> = (props, surface) => {
     <Box flexDirection="column">
       {total === 0 && <Text dimColor>{props.empty}</Text>}
       {shown.slice(0, hasNewer ? rows - 1 : rows).map(entry => line(entry, Text))}
-      {hasNewer && <Text dimColor>{props.newer.replace('{n}', String(offset))}</Text>}
+      {hasNewer && <Text dimColor>{props.newer.replace('{n}', String(offset + props.newerCount))}</Text>}
     </Box>
-  )
-}
-
-type TextLike = typeof Lines extends ClientModule<LinesProps, State> ? Parameters<typeof Lines>[1]['elements']['Text'] : never
-
-// One log line: time dim; W/E/F whole in their color, V/D/I only the level and the tag
-function line(entry: Entry, Text: TextLike) {
-  const style = styleOf(entry.level)
-  const head = `${entry.level}/${entry.tag}:`
-  if (style.isWhole) {
-    return (
-      <Text color={style.color} bold={style.isBold} wrap="truncate-end">
-        <Text dimColor>{entry.time}</Text>  {head} {entry.message}
-      </Text>
-    )
-  }
-  return (
-    <Text wrap="truncate-end">
-      <Text dimColor>{entry.time}</Text>  <Text color={style.color} dimColor={style.isDim}>{head}</Text> {entry.message}
-    </Text>
   )
 }
 

@@ -3,6 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import {
   applicationIdFrom,
   formatLine,
+  isPackageName,
   logcatArgv,
   parseDevices,
   parseLine,
@@ -11,6 +12,7 @@ import {
   pickPackage,
   RingBuffer,
   splitLines,
+  stampOf,
   styleOf,
   tail,
 } from '../hooks/model'
@@ -20,7 +22,9 @@ const LINE = '11-02 14:03:21.123  1234  5678 D MyTag   : hello world'
 test('a threadtime line parses into its fields', async () => {
   const entry = parseLine(LINE)
   expect(entry).toBeDefined()
+  expect(entry?.date).toBe('11-02')
   expect(entry?.time).toBe('14:03:21.123')
+  expect(stampOf(entry!)).toBe('11-02 14:03:21.123')
   expect(entry?.pid).toBe(1234)
   expect(entry?.tid).toBe(5678)
   expect(entry?.level).toBe('D')
@@ -105,8 +109,16 @@ test('adb devices lists only devices that are ready, with their model', async ()
   expect(parseDevices(out)).toEqual([{ serial: 'R3CY40JZPDM', model: 'SM F966N' }])
 })
 
-test('the logcat command filters by uid, else by pid, else not at all', async () => {
+test('the logcat command filters by uid, else by pid, else not at all, and resumes from a stamp', async () => {
   expect(logcatArgv('adb', 'S', { uid: 10 }, 500)).toEqual(['adb', '-s', 'S', 'logcat', '-v', 'threadtime', '-T', '500', '--uid=10'])
   expect(logcatArgv('adb', 'S', { pid: 7 }, 500)).toContain('--pid=7')
   expect(logcatArgv('adb', 'S', {}, 500)).toHaveLength(8)
+  expect(logcatArgv('adb', 'S', {}, '11-02 14:03:21.123')).toContain('11-02 14:03:21.123')
+})
+
+test('a package name holds letters, digits, dots and underscores alone', async () => {
+  expect(isPackageName('com.example.app_2')).toBe(true)
+  expect(isPackageName('com.x; reboot')).toBe(false)
+  expect(isPackageName('com.x rm')).toBe(false)
+  expect(isPackageName('')).toBe(false)
 })

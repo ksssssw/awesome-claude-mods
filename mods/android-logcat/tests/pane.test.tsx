@@ -27,9 +27,22 @@ const LINES = [
 
 const ran = (stdout: string, exitCode = 0) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
 
+const MORE = ['11-02 14:03:22.000  1234  1234 I App     : later one', '11-02 14:03:22.001  1234  1234 E Crash   : later two'].join('\n')
+
+type Adb = {
+  clock: ReturnType<typeof mock.clock>
+  // Every logcat argv spawned, in order
+  spawns: string[][]
+  // Lets the running child print MORE
+  release: () => void
+  // Whether the first child ends on its own after its lines (a dropped connection)
+  endFirst: boolean
+}
+
 // Nothing sits beneath the plugin: these hooks stand for the engine and for adb
-function engine(on: On) {
+function engine(on: On, endFirst = false): Adb {
   const clock = mock.clock(on)
+  const adb: Adb = { clock, spawns: [], release: () => undefined, endFirst }
   mock.env(on, { HOME: '/tmp/nobody' })
   on('command.register', () => ({ value: { command: 'logcat' } }))
   on('tool.register', () => ({ value: { tool: 'mcp__android-logcat__logcat_read' } }))
@@ -45,33 +58,40 @@ function engine(on: On) {
     if (argv.includes('list packages')) return ran('package:com.example.app.debug uid:10234\n')
     return ran('', 1)
   })
-  on('process.spawn', async function* () {
+  on('process.spawn', async function* (_, e) {
+    adb.spawns.push([...e.argv])
+    const isFirst = adb.spawns.length === 1
     yield { stream: 'stdout' as const, text: LINES.slice(0, 40) }
     yield { stream: 'stdout' as const, text: LINES.slice(40) + '\n' }
+    if (isFirst && adb.endFirst) return { value: { code: 1, signal: null } }
+    await new Promise<void>(resolve => {
+      adb.release = resolve
+    })
+    yield { stream: 'stdout' as const, text: MORE + '\n' }
     await new Promise<never>(() => {})
     return { value: { code: 0, signal: null } }
   })
-  return clock
+  return adb
 }
 
 // What the engine stamps on a command the person typed
 const COMMAND = { origin: { isPerson: true }, presentation: { isFullscreen: true } }
 
-async function turnOn($: Engine, clock: ReturnType<typeof mock.clock>) {
+async function turnOn($: Engine, { clock }: Adb) {
   await $.command.run({ command: 'logcat', args: 'com.example.app', ...COMMAND } as never)
   // The capture resolves adb, the device and the package, then reads the lines; the redraw timer runs
   for (let i = 0; i < 5; i++) await clock.advance(100)
 }
 
 test('the pane is empty until /logcat, then shows the device, the package and colored lines', async ($, on) => {
-  const clock = engine(on)
+  const adb = engine(on)
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
 
   const before = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await before.find({ type: 'Text', text: /off/ })).toBeDefined()
   await before.unmount()
 
-  await turnOn($, clock)
+  await turnOn($, adb)
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: /com\.example\.app\.debug/ })).toBeDefined()
@@ -86,9 +106,9 @@ test('the pane is empty until /logcat, then shows the device, the package and co
 })
 
 test('the level picker and the text filter narrow what is shown', async ($, on) => {
-  const clock = engine(on)
+  const adb = engine(on)
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
-  await turnOn($, clock)
+  await turnOn($, adb)
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await ui.select({ key: 'level', value: 'W' })
@@ -105,9 +125,9 @@ test('the level picker and the text filter narrow what is shown', async ($, on) 
 })
 
 test('logcat_read answers the newest matching lines, and says so while off', async ($, on) => {
-  const clock = engine(on)
+  const adb = engine(on)
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
-  await turnOn($, clock)
+  await turnOn($, adb)
 
   // A plugin tool's answer is its own `result`; the model reads it as text
   const errors = await $.tool.call({ tool: 'mcp__android-logcat__logcat_read', level: 'E' } as never)
@@ -120,9 +140,9 @@ test('logcat_read answers the newest matching lines, and says so while off', asy
 })
 
 test('the lines region scrolls back by key and by the buttons, and follows again on f', async ($, on) => {
-  const clock = engine(on)
+  const adb = engine(on)
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
-  await turnOn($, clock)
+  await turnOn($, adb)
 
   const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, scroll: { offset: 0, bodyRows: 6 } }, surface: 'terminal' })
   await ui.select({ key: 'level', value: 'V' })
@@ -147,9 +167,9 @@ test('the lines region scrolls back by key and by the buttons, and follows again
 })
 
 test('the wheel over the pane scrolls the lines and leaves the window alone', async ($, on) => {
-  const clock = engine(on)
+  const adb = engine(on)
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
-  await turnOn($, clock)
+  await turnOn($, adb)
 
   const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, scroll: { offset: 0, bodyRows: 6 } }, surface: 'terminal' })
   await ui.select({ key: 'level', value: 'V' })
@@ -157,6 +177,71 @@ test('the wheel over the pane scrolls the lines and leaves the window alone', as
   expect(moved).toEqual({})
   expect(await ui.find({ type: 'Text', text: /verbose noise/, in: 'lines' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /E\/Crash:/, in: 'lines' })).toBeUndefined()
+  await ui.unmount()
+  await $.command.run({ command: 'logcat', args: 'off', ...COMMAND } as never)
+})
+
+test('a reconnect resumes from the last line instead of reading the backlog again', async ($, on) => {
+  const adb = engine(on, true)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await turnOn($, adb)
+  // The first child ended: the loop waits, then spawns again
+  for (let i = 0; i < 30; i++) await adb.clock.advance(100)
+
+  expect(adb.spawns).toHaveLength(2)
+  expect(adb.spawns[0]).toContain('500')
+  expect(adb.spawns[1]).toContain('11-02 14:03:21.005')
+  const all = await $.tool.call({ tool: 'mcp__android-logcat__logcat_read', level: 'E' } as never)
+  expect((all.result as string).split('\n')).toHaveLength(1)
+  await $.command.run({ command: 'logcat', args: 'off', ...COMMAND } as never)
+})
+
+test('a package argument the device shell could misread is refused', async ($, on) => {
+  const adb = engine(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  const answer = await $.command.run({ command: 'logcat', args: 'com.x; reboot', ...COMMAND } as never)
+  expect(answer.text).toContain('not a package name')
+  expect(adb.spawns).toHaveLength(0)
+})
+
+test('turning logcat off and on again starts unpaused and at the newest line', async ($, on) => {
+  const adb = engine(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await turnOn($, adb)
+  const first = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await first.press({ key: 'pause' })
+  expect(await first.find({ type: 'Button', key: 'pause', text: /Resume/ })).toBeDefined()
+  await first.unmount()
+  await $.command.run({ command: 'logcat', args: 'off', ...COMMAND } as never)
+
+  await turnOn($, adb)
+  const again = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await again.find({ type: 'Button', key: 'pause', text: /Pause/ })).toBeDefined()
+  expect(await again.find({ type: 'Text', text: /E\/Crash:/, in: 'lines' })).toBeDefined()
+  await again.unmount()
+  await $.command.run({ command: 'logcat', args: 'off', ...COMMAND } as never)
+})
+
+test('while scrolled up the rows stay put as lines arrive, and f shows the new ones', async ($, on) => {
+  const adb = engine(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await turnOn($, adb)
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, scroll: { offset: 0, bodyRows: 6 } }, surface: 'terminal' })
+  await ui.select({ key: 'level', value: 'V' })
+  await ui.press({ key: 'older' })
+  expect(await ui.find({ type: 'Text', text: /verbose noise/, in: 'lines' })).toBeDefined()
+
+  adb.release()
+  for (let i = 0; i < 5; i++) await adb.clock.advance(100)
+  // Two more lines arrived; a state write redraws the mount (the timer's invalidate is the surface's)
+  await ui.select({ key: 'level', value: 'V' })
+  // The view holds, the note counts them
+  expect(await ui.find({ type: 'Text', text: /verbose noise/, in: 'lines' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /later/, in: 'lines' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /4 newer lines/, in: 'lines' })).toBeDefined()
+
+  await ui.press({ key: 'follow' })
+  expect(await ui.find({ type: 'Text', text: /later two/, in: 'lines' })).toBeDefined()
   await ui.unmount()
   await $.command.run({ command: 'logcat', args: 'off', ...COMMAND } as never)
 })

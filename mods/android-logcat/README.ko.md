@@ -84,7 +84,7 @@ echo '{"language":"ko"}' | claude plugin configure android-logcat@awesome-claude
 
 ```bash
 claude plugin validate mods/android-logcat --profile directory
-claude plugin test mods/android-logcat        # 테스트 16개
+claude plugin test mods/android-logcat        # 테스트 21개
 claude --plugin-dir mods/android-logcat       # 이 폴더를 바로 로드, 저장하면 다시 로드
 ```
 

@@ -16,6 +16,8 @@ export const LEVEL_OPTIONS: readonly { value: Level; label: string }[] = [
 ]
 
 export type Entry = {
+  // The day as logcat prints it, `MM-DD`; with `time` it names the moment a reconnect resumes from
+  date: string
   time: string
   pid: number
   tid: number
@@ -52,16 +54,16 @@ export function styleOf(level: Level): Style {
 }
 
 // `adb logcat -v threadtime`: "11-02 14:03:21.123  1234  5678 D Tag     : message"
-const THREADTIME = /^\d\d-\d\d (\d\d:\d\d:\d\d\.\d{3})\s+(\d+)\s+(\d+) ([VDIWEFAS]) (.*?)\s*: ?(.*)$/
+const THREADTIME = /^(\d\d-\d\d) (\d\d:\d\d:\d\d\.\d{3})\s+(\d+)\s+(\d+) ([VDIWEFAS]) (.*?)\s*: ?(.*)$/
 
 export function parseLine(line: string): Entry | undefined {
   if (line.startsWith('--------- ')) return undefined
   const m = THREADTIME.exec(line)
   if (!m) return undefined
-  const raw = m[4] ?? ''
+  const raw = m[5] ?? ''
   if (raw === 'S') return undefined
   const level: Level = raw === 'A' ? 'F' : (raw as Level)
-  return { time: m[1] ?? '', pid: Number(m[2]), tid: Number(m[3]), level, tag: m[5] ?? '', message: m[6] ?? '' }
+  return { date: m[1] ?? '', time: m[2] ?? '', pid: Number(m[3]), tid: Number(m[4]), level, tag: m[6] ?? '', message: m[7] ?? '' }
 }
 
 // Chunks arrive cut anywhere; the tail that has no newline yet waits for the next one
@@ -90,6 +92,16 @@ export function passesFilter(entry: Entry, min: Level, text: string): boolean {
   const needle = text.trim().toLowerCase()
   if (needle === '') return true
   return entry.tag.toLowerCase().includes(needle) || entry.message.toLowerCase().includes(needle)
+}
+
+// `MM-DD HH:MM:SS.mmm`, what `logcat -T` takes and what orders two entries of one day
+export function stampOf(entry: Entry): string {
+  return `${entry.date} ${entry.time}`
+}
+
+// A package name as adb's shell may see it: letters, digits, dots and underscores alone
+export function isPackageName(value: string): boolean {
+  return /^[A-Za-z0-9_.]+$/.test(value)
 }
 
 export function formatLine(entry: Entry): string {
@@ -172,7 +184,8 @@ export function parseDevices(out: string): Device[] {
   return list
 }
 
-export function logcatArgv(adb: string, serial: string, filter: { uid?: number; pid?: number }, backlog: number): string[] {
+// `backlog` is a count of lines on the first start, or a `MM-DD HH:MM:SS.mmm` stamp to resume from
+export function logcatArgv(adb: string, serial: string, filter: { uid?: number; pid?: number }, backlog: number | string): string[] {
   const argv = [adb, '-s', serial, 'logcat', '-v', 'threadtime', '-T', String(backlog)]
   if (filter.uid !== undefined) argv.push(`--uid=${filter.uid}`)
   else if (filter.pid !== undefined) argv.push(`--pid=${filter.pid}`)

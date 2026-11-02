@@ -10,6 +10,8 @@ export type Strings = {
   cleared: string
   alreadyOff: string
   failed: string
+  badPackage: (arg: string) => string
+  error: (reason: string) => string
   level: string
   filter: string
   filterPlaceholder: string
@@ -44,6 +46,8 @@ const EN: Strings = {
   cleared: 'logcat cleared',
   alreadyOff: 'logcat is already off',
   failed: 'logcat could not run; see the debug log',
+  badPackage: arg => `not a package name: ${arg}`,
+  error: reason => `error: ${reason}`,
   level: 'Level',
   filter: 'Filter',
   filterPlaceholder: 'tag or message',
@@ -78,6 +82,8 @@ const KO: Strings = {
   cleared: 'logcat 비움',
   alreadyOff: 'logcat이 이미 꺼져 있습니다',
   failed: 'logcat을 실행하지 못했습니다. 디버그 로그를 보세요',
+  badPackage: arg => `패키지 이름이 아닙니다: ${arg}`,
+  error: reason => `오류: ${reason}`,
   level: '레벨',
   filter: '필터',
   filterPlaceholder: '태그 또는 메시지',
