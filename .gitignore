@@ -4,3 +4,5 @@ node_modules/
 **/.claude-plugin/types/
 # A local list of strings that must never be published (see CONTRIBUTING.md)
 forbidden.txt
+# The tsconfig the engine writes beside a loaded mod (it extends the ignored types folder)
+mods/*/tsconfig.json
