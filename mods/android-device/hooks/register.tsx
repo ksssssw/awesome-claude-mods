@@ -1,0 +1,1169 @@
+import { atom, read, update } from 'claude-code'
+import type { EngineInterface, Register, RenderChildren, Timer, ToolDescribeInput, ToolDescribeResult } from 'claude-code'
+
+import type { Confirm, Failure, LastInstall, Pending, Pick, Recording } from '../types'
+import {
+  apkPaths,
+  appInfo,
+  badging,
+  clearData,
+  deviceInfo,
+  findAapt,
+  findAdb,
+  forceStop,
+  foregroundApp,
+  install,
+  launch,
+  listDevices,
+  pull,
+  pullFile,
+  recordArgv,
+  resolvePackage,
+  scanRepo,
+  screenshot,
+  stopRecording,
+  uninstall,
+} from './adb'
+import type { Repo } from './adb'
+import { setLanguage, t } from './i18n'
+import {
+  apkPathOf,
+  barCells,
+  basename,
+  captureName,
+  chooseSerial,
+  classifyFailure,
+  dirname,
+  flagOf,
+  formatBytes,
+  formatClock,
+  formatDuration,
+  formatStamp,
+  isAbsolute,
+  isPackageName,
+  clampInt,
+  isSerial,
+  pulledName,
+  refineFailure,
+  relativeTo,
+  shortStamp,
+} from './model'
+import type { AppInfo, Badging, Device, DeviceInfo } from './model'
+
+const PANE = 'adb'
+const COMMAND = 'adb'
+
+// How often the connected devices are listed, and the chosen one's state read
+const DEVICES_MS = 2000
+const STATUS_MS = 10_000
+// At most this often the pane is redrawn while something changed
+const REDRAW_MS = 100
+// A second's tick for the install and recording counters
+const TICK_MS = 1000
+// Columns under which a block's detail line is split in two
+const NARROW = 60
+const LIST_MAX = 9
+// After a drop, how long until the prompt box is emptied of the path
+const CLEAR_BOX_MS = 100
+
+// What survives a hot reload: on or off, the chosen device, the waiting APK and the open questions
+const isOn = atom({ plugin: 'android-device', key: 'isOn' } as const, false)
+const serial = atom({ plugin: 'android-device', key: 'serial' } as const, '')
+const override = atom({ plugin: 'android-device', key: 'override' } as const, null)
+const pending = atom({ plugin: 'android-device', key: 'pending' } as const, null)
+const last = atom({ plugin: 'android-device', key: 'last' } as const, null)
+const pick = atom({ plugin: 'android-device', key: 'pick' } as const, 'none')
+const confirm = atom({ plugin: 'android-device', key: 'confirm' } as const, null)
+const recording = atom({ plugin: 'android-device', key: 'recording' } as const, null)
+
+type Options = { package: string; serial: string; outputDir: string; grantPermissions: boolean; rows: number }
+
+// Lost on a reload: read again from adb and the repo when the pane comes back
+let options: Options = { package: '', serial: '', outputDir: '', grantPermissions: false, rows: 16 }
+let cwd = ''
+let adbPath: string | undefined
+// null: looked and found none, so the package of an APK is guessed from the repo
+let aaptPath: string | null | undefined
+let devices: Device[] = []
+let info: DeviceInfo | undefined
+// The id the repo or the person names, and the installed package it resolves to (a flavor of it, or itself)
+let base: string | undefined
+let pkg: string | undefined
+let app: AppInfo | undefined
+let repo: Repo = { isAndroid: false, ids: [], apks: [] }
+let busy: 'install' | 'capture' | undefined
+let installStartedAt: number | undefined
+let installingFile = ''
+let nowMs = 0
+// One line under the header: the last outcome or the reason an action did not run
+let notice: string | undefined
+let noticeColor: string | undefined
+let isDirty = false
+let timers: Timer[] = []
+let recordStream: AsyncGenerator<unknown, unknown> | undefined
+let recordingNow: Recording = null
+let isToolRegistered = false
+let lastStatusLine: string | undefined
+
+function mark() {
+  isDirty = true
+}
+
+// A toast for an outcome; a warning line alone for why an action did not run
+function say($: EngineInterface, text: string, toast = true) {
+  notice = text
+  noticeColor = toast ? undefined : 'warning'
+  if (toast) $.ui.toast(text)
+  mark()
+}
+
+function chosenDevice(s: string): Device | undefined {
+  return devices.find(d => d.serial === s)
+}
+
+function deviceLabel(d: Device): string {
+  return d.model ? `${d.model} (${d.serial})` : d.serial
+}
+
+async function packageBase($: EngineInterface): Promise<string | undefined> {
+  return (await read($, override)) ?? (options.package || undefined) ?? repo.ids[0]
+}
+
+async function ensureAdb($: EngineInterface): Promise<string | undefined> {
+  adbPath = adbPath ?? (await findAdb($))
+  return adbPath
+}
+
+async function refreshRepo($: EngineInterface) {
+  cwd = await $.session.cwd()
+  repo = await scanRepo($, cwd)
+  mark()
+}
+
+// Lists the devices; a lost or a new one changes the choice, and the choice's state is read again
+async function refreshDevices($: EngineInterface) {
+  const adb = await ensureAdb($)
+  const before = JSON.stringify(devices)
+  devices = adb ? await listDevices($, adb) : []
+  const was = await read($, serial)
+  const chosen = chooseSerial(devices, was, options.serial)
+  if (chosen !== was) {
+    await update($, serial, () => chosen)
+    if (chosen) await refreshStatus($)
+    else {
+      info = undefined
+      app = undefined
+    }
+  }
+  if (JSON.stringify(devices) !== before) mark()
+}
+
+async function refreshStatus($: EngineInterface) {
+  const adb = await ensureAdb($)
+  const s = await read($, serial)
+  if (!adb || !s) {
+    info = undefined
+    app = undefined
+    mark()
+    return
+  }
+  info = await deviceInfo($, adb, s)
+  base = await packageBase($)
+  pkg = base ? ((await resolvePackage($, adb, s, base)) ?? base) : undefined
+  app = pkg ? await appInfo($, adb, s, pkg) : undefined
+  mark()
+}
+
+async function refreshAll($: EngineInterface) {
+  await refreshRepo($)
+  await refreshDevices($)
+  await refreshStatus($)
+}
+
+// A refresh left running in the background: a failure (the engine busy, a refused read) is shown, never unheard
+function inBackground($: EngineInterface, work: Promise<unknown>) {
+  work.catch((error: unknown) => say($, error instanceof Error ? error.message : String(error), false))
+}
+
+// What an action needs: adb and a chosen online device; says why when either is missing
+async function ready($: EngineInterface): Promise<{ adb: string; s: string } | undefined> {
+  const adb = await ensureAdb($)
+  if (!adb) {
+    say($, t().noAdb, false)
+    return undefined
+  }
+  const s = await read($, serial)
+  if (!s || chosenDevice(s)?.state !== 'device') {
+    say($, devices.length > 1 ? t().pickDevice : devices.length === 0 ? t().noDevice : t().needDevice, false)
+    return undefined
+  }
+  if (busy) {
+    say($, t().busy, false)
+    return undefined
+  }
+  return { adb, s }
+}
+
+type InstallOutcome = { ok: true; last: NonNullable<LastInstall> } | { ok: false; failure: Failure } | { ok: false; reason: string }
+
+// One `adb install -r` of the waiting APK; a failure is left in the Install block as a question
+async function runInstall($: EngineInterface, p: NonNullable<Pending>): Promise<InstallOutcome> {
+  const at = await ready($)
+  if (!at) return { ok: false, reason: notice ?? t().failed }
+  await update($, pending, () => ({ path: p.path, flags: p.flags }))
+  const flags = options.grantPermissions && !p.flags.includes('-g') ? [...p.flags, '-g'] : p.flags
+  busy = 'install'
+  installingFile = basename(p.path)
+  installStartedAt = await $.clock.now()
+  mark()
+  let outcome: InstallOutcome
+  try {
+    const ran = await install($, at.adb, at.s, p.path, flags)
+    if (ran.ok) {
+      const installed = await installedPackage($, at.adb, at.s, p.path)
+      const d = chosenDevice(at.s)
+      const done: NonNullable<LastInstall> = {
+        file: basename(p.path),
+        package: installed?.package ?? pkg ?? '',
+        versionName: installed?.versionName,
+        versionCode: installed?.versionCode,
+        serial: at.s,
+        model: info?.model ?? d?.model,
+        ms: ran.ms,
+        at: await $.clock.now(),
+      }
+      await update($, last, () => done)
+      await update($, pending, () => null)
+      say($, t().installed(done.package, versionText(done.versionName, done.versionCode)))
+      outcome = { ok: true, last: done }
+    } else {
+      const failure = refineFailure(classifyFailure(ran.output), flags, await apkBadging($, p.path), { afterD: t().downgradeAfterD, release: t().downgradeRelease })
+      await update($, pending, () => ({ path: p.path, flags: p.flags, failure }))
+      say($, t().installFailed(failure.code, failure.message), false)
+      outcome = { ok: false, failure }
+    }
+  } finally {
+    busy = undefined
+    installStartedAt = undefined
+    mark()
+  }
+  await refreshStatus($)
+  return outcome
+}
+
+// What aapt says of the APK, where the SDK's build-tools are installed
+async function apkBadging($: EngineInterface, path: string): Promise<Badging | undefined> {
+  aaptPath = aaptPath === undefined ? await findAapt($) : aaptPath
+  return aaptPath ? badging($, aaptPath, path) : undefined
+}
+
+// The package the APK carries, read by aapt where there is one, else the repo's app as installed now
+async function installedPackage($: EngineInterface, adb: string, s: string, path: string): Promise<AppInfo | undefined> {
+  const fromApk = await apkBadging($, path)
+  const name = fromApk?.package ?? (base ? ((await resolvePackage($, adb, s, base)) ?? base) : undefined)
+  if (!name) return undefined
+  return (await appInfo($, adb, s, name)) ?? { package: name, versionName: fromApk?.versionName, versionCode: fromApk?.versionCode, isEnabled: true }
+}
+
+function versionText(name: string | undefined, code: number | undefined): string {
+  return t().version(name ?? '?', code === undefined ? '?' : String(code))
+}
+
+async function answerYes($: EngineInterface) {
+  const question = await read($, confirm)
+  if (question) {
+    await update($, confirm, () => null)
+    if (question.kind === 'uninstall') await doUninstall($)
+    else await doClear($)
+    return
+  }
+  const p = await read($, pending)
+  if (!p?.failure) return
+  if (p.failure.retry === 'reinstall') {
+    const at = await ready($)
+    if (!at) return
+    const target = await targetPackage($, at.adb, at.s, p.path)
+    if (target) await uninstall($, at.adb, at.s, target)
+    await runInstall($, { path: p.path, flags: p.flags })
+    return
+  }
+  const flag = flagOf(p.failure.retry)
+  const flags = flag && !p.flags.includes(flag) ? [...p.flags, flag] : p.flags
+  await runInstall($, { path: p.path, flags })
+}
+
+// The package an APK would replace: what the APK says, else the repo's app
+async function targetPackage($: EngineInterface, adb: string, s: string, path: string): Promise<string | undefined> {
+  const fromApk = await apkBadging($, path)
+  return fromApk?.package ?? (base ? ((await resolvePackage($, adb, s, base)) ?? base) : undefined)
+}
+
+async function answerNo($: EngineInterface) {
+  await update($, confirm, () => null)
+  await update($, pending, p => (p?.failure ? { path: p.path, flags: p.flags } : p))
+  mark()
+}
+
+async function doLaunch($: EngineInterface): Promise<string> {
+  const at = await ready($)
+  if (!at) return notice ?? t().failed
+  if (!pkg) return t().needPackage
+  const ok = await launch($, at.adb, at.s, pkg)
+  say($, ok ? t().launched(pkg) : t().launchFailed(pkg))
+  inBackground($, refreshStatus($))
+  return notice ?? ''
+}
+
+async function doStop($: EngineInterface): Promise<string> {
+  const at = await ready($)
+  if (!at) return notice ?? t().failed
+  if (!pkg) return t().needPackage
+  await forceStop($, at.adb, at.s, pkg)
+  say($, t().stopped(pkg))
+  inBackground($, refreshStatus($))
+  return notice ?? ''
+}
+
+async function doUninstall($: EngineInterface): Promise<string> {
+  const at = await ready($)
+  if (!at) return notice ?? t().failed
+  if (!pkg) return t().needPackage
+  const ran = await uninstall($, at.adb, at.s, pkg)
+  const ok = ran !== undefined && ran.exitCode === 0 && /^Success/m.test(ran.stdout)
+  say($, ok ? t().uninstalled(pkg) : t().uninstallFailed(pkg, (ran ? `${ran.stdout}\n${ran.stderr}` : '').trim().split(/\r?\n/).pop() ?? ''))
+  inBackground($, refreshStatus($))
+  return notice ?? ''
+}
+
+async function doClear($: EngineInterface): Promise<string> {
+  const at = await ready($)
+  if (!at) return notice ?? t().failed
+  if (!pkg) return t().needPackage
+  const ok = await clearData($, at.adb, at.s, pkg)
+  say($, ok ? t().cleared(pkg) : t().clearFailed(pkg))
+  inBackground($, refreshStatus($))
+  return notice ?? ''
+}
+
+async function outputDir($: EngineInterface): Promise<string> {
+  if (options.outputDir) return options.outputDir
+  return `${(await $.env.get('HOME')) ?? '.'}/Downloads`
+}
+
+async function doScreenshot($: EngineInterface): Promise<string> {
+  const at = await ready($)
+  if (!at) return notice ?? t().failed
+  busy = 'capture'
+  mark()
+  try {
+    const name = captureName(info?.model ?? chosenDevice(at.s)?.model, new Date(await $.clock.now()), 'png')
+    const local = `${await outputDir($)}/${name}`
+    const ok = await screenshot($, at.adb, at.s, `/sdcard/${name}`, local)
+    say($, ok ? t().screenshotSaved(local) : t().captureFailed)
+    return ok ? local : t().captureFailed
+  } finally {
+    busy = undefined
+    mark()
+  }
+}
+
+// Pulls the APK (base and splits) of the app in front, or of the package named, into the capture folder
+async function doPull($: EngineInterface, named?: string): Promise<string> {
+  const at = await ready($)
+  if (!at) return notice ?? t().failed
+  busy = 'capture'
+  mark()
+  try {
+    const target = named ?? (await foregroundApp($, at.adb, at.s))
+    if (!target) {
+      say($, t().noForeground, false)
+      return t().noForeground
+    }
+    const paths = await apkPaths($, at.adb, at.s, target)
+    if (paths.length === 0) {
+      say($, t().noneInstalledInfo(target), false)
+      return t().noneInstalledInfo(target)
+    }
+    const a = await appInfo($, at.adb, at.s, target)
+    const dir = await outputDir($)
+    const locals: string[] = []
+    for (const remote of paths) {
+      const local = `${dir}/${pulledName(target, a?.versionName, a?.versionCode, remote)}`
+      if (!(await pullFile($, at.adb, at.s, remote, local))) {
+        say($, t().pullFailed(target), false)
+        return t().pullFailed(target)
+      }
+      locals.push(local)
+    }
+    const text = locals.length === 1 ? t().pulled(target, locals[0]!) : t().pulledSplits(target, locals.length, dir)
+    say($, text)
+    return locals.length === 1 ? text : `${text}\n${locals.join('\n')}`
+  } finally {
+    busy = undefined
+    mark()
+  }
+}
+
+async function toggleRecording($: EngineInterface): Promise<string> {
+  if (recordingNow) {
+    const adb = await ensureAdb($)
+    if (adb) await stopRecording($, adb, recordingNow.serial)
+    return t().stopRecord
+  }
+  const at = await ready($)
+  if (!at) return notice ?? t().failed
+  const name = captureName(info?.model ?? chosenDevice(at.s)?.model, new Date(await $.clock.now()), 'mp4')
+  const started: NonNullable<Recording> = { startedAt: await $.clock.now(), remote: `/sdcard/${name}`, local: `${await outputDir($)}/${name}`, serial: at.s }
+  const stream = $.process.spawn({ argv: recordArgv(at.adb, at.s, started.remote) })
+  recordStream = stream
+  recordingNow = started
+  await update($, recording, () => started)
+  say($, t().recordingStarted)
+  inBackground($, finishRecording($, at.adb, stream, started))
+  return t().recordingStarted
+}
+
+// Waits for screenrecord to end (its limit, or the stop's SIGINT), then pulls the file
+async function finishRecording($: EngineInterface, adb: string, stream: AsyncGenerator<unknown, unknown>, rec: NonNullable<Recording>) {
+  try {
+    for await (const _chunk of stream) {
+      // the child prints nothing of use
+    }
+  } catch {
+    // the child ended with an error: the file may still be there
+  }
+  recordStream = undefined
+  await $.clock.sleep(1500)
+  const ok = await pull($, adb, rec.serial, rec.remote, rec.local)
+  recordingNow = null
+  await update($, recording, () => null)
+  say($, ok ? t().recordingSaved(rec.local) : t().captureFailed)
+}
+
+// After a reload the child is gone but the device may still record: stop it and keep the file
+async function recoverRecording($: EngineInterface) {
+  const rec = await read($, recording)
+  if (!rec) return
+  const adb = await ensureAdb($)
+  if (adb) {
+    await stopRecording($, adb, rec.serial)
+    await $.clock.sleep(1500)
+    const ok = await pull($, adb, rec.serial, rec.remote, rec.local)
+    say($, ok ? t().recordingSaved(rec.local) : t().captureFailed)
+  }
+  recordingNow = null
+  await update($, recording, () => null)
+}
+
+function resolvePath(path: string): string {
+  return isAbsolute(path) ? path : `${cwd}/${path}`
+}
+
+// Puts an APK in the Install block; the person installs it from there
+async function queue($: EngineInterface, path: string): Promise<string> {
+  const full = resolvePath(path)
+  if (!(await $.fs.exists(full))) return t().noSuchFile(full)
+  await update($, pending, () => ({ path: full, flags: [] }))
+  await update($, pick, () => 'none')
+  if (!(await read($, isOn))) await turnOn($)
+  mark()
+  return t().queued(basename(full))
+}
+
+const TOOL_NAMES = ['device_list', 'apk_list', 'apk_install', 'package_info', 'app_launch', 'app_stop', 'screenshot', 'apk_pull'] as const
+type ToolName = (typeof TOOL_NAMES)[number]
+
+const PACKAGE_INPUT = {
+  type: 'object',
+  properties: { package: { type: 'string', description: 'A package name. Default: the app of the repo in the working directory.' } },
+} as const
+
+async function ensureTools($: EngineInterface) {
+  if (isToolRegistered) return
+  const s = t()
+  const specs: { name: ToolName; description: string; inputSchema: Record<string, unknown> }[] = [
+    { name: 'device_list', description: s.toolDeviceList, inputSchema: { type: 'object', properties: {} } },
+    { name: 'apk_list', description: s.toolApkList, inputSchema: { type: 'object', properties: {} } },
+    {
+      name: 'apk_install',
+      description: s.toolApkInstall,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'The APK file, absolute or relative to the working directory.' },
+          allowDowngrade: { type: 'boolean', description: 'Add -d: replace a newer version with this older one. Only after the person agreed.' },
+          allowTestOnly: { type: 'boolean', description: 'Add -t: install an APK marked test-only. Only after the person agreed.' },
+        },
+        required: ['path'],
+      },
+    },
+    { name: 'package_info', description: s.toolPackageInfo, inputSchema: PACKAGE_INPUT },
+    { name: 'app_launch', description: s.toolAppLaunch, inputSchema: PACKAGE_INPUT },
+    { name: 'app_stop', description: s.toolAppStop, inputSchema: PACKAGE_INPUT },
+    { name: 'screenshot', description: s.toolScreenshot, inputSchema: { type: 'object', properties: {} } },
+    { name: 'apk_pull', description: s.toolApkPull, inputSchema: { type: 'object', properties: { package: { type: 'string', description: 'A package name. Default: the app in the foreground.' } } } },
+  ]
+  for (const spec of specs) await $.tool.register({ ...spec, isDeferred: false })
+  isToolRegistered = true
+}
+
+async function turnOn($: EngineInterface) {
+  await update($, isOn, () => true)
+  await ensureTools($)
+  $.ui.invalidate('tool.describe')
+  notice = undefined
+  noticeColor = undefined
+  await update($, pick, () => 'none')
+  await update($, confirm, () => null)
+  startPolling($)
+  await $.ui.open({ id: PANE, title: t().title, rows: options.rows })
+  inBackground($, refreshAll($))
+}
+
+function startPolling($: EngineInterface) {
+  stopPolling()
+  timers = [
+    $.clock.every(DEVICES_MS, () => {
+      if (!busy) inBackground($, refreshDevices($))
+    }),
+    $.clock.every(STATUS_MS, () => {
+      if (!busy) inBackground($, refreshStatus($))
+    }),
+    $.clock.every(TICK_MS, async () => {
+      nowMs = await $.clock.now()
+      if (busy === 'install' || recordingNow) mark()
+    }),
+  ]
+}
+
+function stopPolling() {
+  for (const timer of timers) timer.cancel()
+  timers = []
+}
+
+// Ends the polling and forgets the on state; the pane is closed by the caller or already closing
+async function turnOff($: EngineInterface) {
+  stopPolling()
+  if (recordingNow && adbPath) await stopRecording($, adbPath, recordingNow.serial)
+  await update($, isOn, () => false)
+  await update($, pick, () => 'none')
+  await update($, confirm, () => null)
+  $.ui.invalidate('tool.describe')
+  $.ui.status(undefined)
+  lastStatusLine = undefined
+}
+
+function statusLine(): string | undefined {
+  if (busy === 'install') return t().statusInstalling(installingFile)
+  if (recordingNow) return t().statusRecording(formatClock(nowMs - recordingNow.startedAt))
+  const model = info?.model ?? ''
+  if (!model) return undefined
+  return t().statusLine(model, pkg ?? '', app ? versionText(app.versionName, app.versionCode) : '')
+}
+
+function describeApp(a: AppInfo): string[] {
+  const parts = [versionText(a.versionName, a.versionCode)]
+  const updated = shortStamp(a.lastUpdate)
+  const first = shortStamp(a.firstInstall)
+  if (updated && updated !== first) parts.push(t().updated(updated))
+  else if (first) parts.push(t().firstInstalled(first))
+  if (a.installer) parts.push(a.installer)
+  if (!a.isEnabled) parts.push(t().disabled)
+  if (a.pid !== undefined) parts.push(t().running(a.pid))
+  return parts
+}
+
+function describeDevice(d: Device, i: DeviceInfo | undefined): { head: string[]; detail: string[] } {
+  const s = t()
+  const head = [i?.model ?? d.model ?? d.serial]
+  if (i?.manufacturer) head.push(i.manufacturer)
+  head.push(d.transport === 'usb' ? s.usb : d.transport === 'wifi' ? s.wifi : d.transport)
+  head.push(d.state === 'unauthorized' ? s.unauthorized : d.state === 'offline' ? s.offline : d.state)
+  const detail = [d.serial]
+  if (i?.release && i.sdk) detail.push(s.api(i.release, i.sdk))
+  if (i?.screen) detail.push(i.screen === 'on' ? s.screenOn : s.screenOff)
+  return { head, detail }
+}
+
+// The package a tool names, else the repo's app as installed on the chosen device
+async function namedPackage($: EngineInterface, e: unknown): Promise<string | undefined> {
+  const input = e as { package?: unknown }
+  if (typeof input.package === 'string' && input.package.trim() !== '') {
+    const name = input.package.trim()
+    return isPackageName(name) ? name : undefined
+  }
+  if (!pkg) await refreshStatus($)
+  return pkg
+}
+
+// A tool's description while the pane is off: deferred, so it waits behind ToolSearch
+const deferWhileOff = async ($: EngineInterface, e: ToolDescribeInput, next: (e: ToolDescribeInput) => Promise<ToolDescribeResult>) => {
+  const described = await next(e)
+  return { ...described, isDeferred: !(await read($, isOn)) }
+}
+
+export const register: Register = (on, opts) => {
+  setLanguage(opts.language)
+  options = {
+    package: typeof opts.package === 'string' && isPackageName(opts.package.trim()) ? opts.package.trim() : '',
+    serial: typeof opts.serial === 'string' && isSerial(opts.serial.trim()) ? opts.serial.trim() : '',
+    outputDir: typeof opts.outputDir === 'string' ? opts.outputDir.trim().replace(/\/+$/, '') : '',
+    grantPermissions: opts.grantPermissions === true,
+    rows: clampInt(opts.rows, 16, 8, 200),
+  }
+
+  on('session.start', async ($, e, next) => {
+    await $.command.register({ name: COMMAND, description: t().commandDescription, argumentHint: t().argumentHint })
+    const started = await next(e)
+
+    $.clock.every(REDRAW_MS, () => {
+      if (!isDirty) return
+      isDirty = false
+      $.ui.invalidate('ui.render')
+      const line = statusLine()
+      if (line !== lastStatusLine) {
+        lastStatusLine = line
+        $.ui.status(line)
+      }
+    })
+
+    // A reload ended the timers; the state says the pane was on, so it comes back by itself
+    if (await read($, isOn)) {
+      await ensureTools($)
+      startPolling($)
+      void $.ui.open({ id: PANE, title: t().title, rows: options.rows })
+      inBackground($, refreshAll($).then(() => recoverRecording($)))
+    }
+    return started
+  })
+
+  on('command.run', { command: COMMAND }, async ($, e) => {
+    const raw = e.args.trim()
+    const word = raw.split(/\s+/)[0] ?? ''
+    const rest = raw.slice(word.length).trim()
+    const wasOn = await read($, isOn)
+    const s = t()
+    switch (word) {
+      case '':
+        if (wasOn) {
+          await turnOff($)
+          await $.ui.close({ id: PANE })
+          return { text: s.turnedOff }
+        }
+        await turnOn($)
+        return { text: s.turnedOn }
+      case 'off':
+        if (!wasOn) return { text: s.alreadyOff }
+        await turnOff($)
+        await $.ui.close({ id: PANE })
+        return { text: s.turnedOff }
+      case 'select': {
+        if (!wasOn) await turnOn($)
+        await refreshDevices($)
+        const n = /^[1-9]$/.test(rest) ? Number(rest) : undefined
+        const picked = n !== undefined ? devices[n - 1] : devices.find(d => d.serial === rest)
+        if (!rest || (n === undefined && !isSerial(rest))) return { text: s.badSerial(rest) }
+        if (!picked || picked.state !== 'device') return { text: s.noSuchDevice(rest) }
+        await update($, serial, () => picked.serial)
+        await update($, pick, () => 'none')
+        await refreshStatus($)
+        return { text: s.selected(deviceLabel(picked)) }
+      }
+      case 'install': {
+        const path = apkPathOf(rest) ?? rest
+        if (!path) return { text: s.nothingPending }
+        return { text: await queue($, path) }
+      }
+      case 'apk': {
+        if (!wasOn) await turnOn($)
+        await refreshRepo($)
+        if (!repo.isAndroid) return { text: s.notAndroidRepo }
+        if (repo.apks.length === 0) return { text: s.noApks }
+        await update($, pick, () => 'apk')
+        return { text: s.pickApk }
+      }
+      case 'package': {
+        if (!isPackageName(rest)) return { text: s.badPackage(rest) }
+        await update($, override, () => rest)
+        if (!wasOn) await turnOn($)
+        else await refreshStatus($)
+        return { text: s.packageSet(rest) }
+      }
+      case 'launch':
+        if (!wasOn) await turnOn($)
+        return { text: await doLaunch($) }
+      case 'stop':
+        if (!wasOn) await turnOn($)
+        return { text: await doStop($) }
+      case 'uninstall':
+      case 'clear': {
+        if (!wasOn) await turnOn($)
+        if (!pkg) return { text: s.needPackage }
+        const kind: NonNullable<Confirm>['kind'] = word === 'uninstall' ? 'uninstall' : 'clear'
+        await update($, confirm, () => ({ kind }))
+        mark()
+        return { text: word === 'uninstall' ? s.askUninstall(pkg) : s.askClear(pkg) }
+      }
+      case 'screenshot':
+        if (!wasOn) await turnOn($)
+        return { text: await doScreenshot($) }
+      case 'record':
+        if (!wasOn) await turnOn($)
+        return { text: await toggleRecording($) }
+      case 'pull': {
+        if (!wasOn) await turnOn($)
+        if (rest && !isPackageName(rest)) return { text: s.badPackage(rest) }
+        return { text: await doPull($, rest || undefined) }
+      }
+      case 'refresh':
+        if (!wasOn) await turnOn($)
+        aaptPath = undefined
+        adbPath = undefined
+        await refreshAll($)
+        return { text: s.refreshed }
+      default:
+        return { text: `/adb ${s.argumentHint}` }
+    }
+  }).catch(($, e, next) => (next.called ? next(e) : { text: t().failed }))
+
+  // An .apk path alone in the prompt is a drop on the terminal: it goes to the Install block, not to the model
+  on('prompt.submit', async ($, e, next) => {
+    if (e.command || e.isMeta || (e.origin && e.origin.kind !== 'composer')) return next(e)
+    const path = apkPathOf(e.text)
+    if (!path) return next(e)
+    if (!cwd) cwd = await $.session.cwd()
+    const full = resolvePath(path)
+    if (!(await $.fs.exists(full))) return next(e)
+    const text = await queue($, full)
+    // A dropped prompt stays in the box; once the drop has settled, empty it, since the path is in the pane now
+    $.clock.after(CLEAR_BOX_MS, () => void $.prompt.fill({ text: '' }).catch(() => undefined))
+    return { drop: text }
+  }).catch(($, e, next) => next(e))
+
+  // The person's close mark or key is the off switch too; the plugin's own close already turned it off
+  on('ui.close', { id: PANE }, async ($, e, next) => {
+    if (e.origin.kind === 'person') await turnOff($)
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // While off the tools wait behind ToolSearch and cost the prompt nothing but their names
+  on('tool.describe', { tool: 'mcp__android-device__device_list' }, deferWhileOff)
+  on('tool.describe', { tool: 'mcp__android-device__apk_list' }, deferWhileOff)
+  on('tool.describe', { tool: 'mcp__android-device__apk_install' }, deferWhileOff)
+  on('tool.describe', { tool: 'mcp__android-device__package_info' }, deferWhileOff)
+  on('tool.describe', { tool: 'mcp__android-device__app_launch' }, deferWhileOff)
+  on('tool.describe', { tool: 'mcp__android-device__app_stop' }, deferWhileOff)
+  on('tool.describe', { tool: 'mcp__android-device__screenshot' }, deferWhileOff)
+  on('tool.describe', { tool: 'mcp__android-device__apk_pull' }, deferWhileOff)
+
+  on('tool.call', { tool: 'mcp__android-device__device_list' }, async $ => {
+    if (!(await read($, isOn))) return { result: t().toolOff }
+    await refreshDevices($)
+    const s = await read($, serial)
+    if (devices.length === 0) return { result: t().noneConnected }
+    return { result: devices.map(d => `${d.serial === s ? '* ' : '  '}${d.serial}  ${d.model ?? '?'}  ${d.state}  ${d.transport}`).join('\n') }
+  }).catch(() => ({ deny: 'device_list failed' }))
+
+  on('tool.call', { tool: 'mcp__android-device__apk_list' }, async $ => {
+    if (!(await read($, isOn))) return { result: t().toolOff }
+    await refreshRepo($)
+    if (!repo.isAndroid) return { result: t().notAndroidRepo }
+    if (repo.apks.length === 0) return { result: t().noApks }
+    return { result: repo.apks.map(a => `${a.path}  ${formatBytes(a.size)}  ${formatStamp(a.mtimeMs)}`).join('\n') }
+  }).catch(() => ({ deny: 'apk_list failed' }))
+
+  on('tool.call', { tool: 'mcp__android-device__apk_install' }, async ($, e) => {
+    if (!(await read($, isOn))) return { result: t().toolOff }
+    const input = e as unknown as { path?: unknown; allowDowngrade?: unknown; allowTestOnly?: unknown }
+    if (typeof input.path !== 'string' || input.path.trim() === '') return { deny: 'apk_install: path is required' }
+    if (!cwd) cwd = await $.session.cwd()
+    const full = resolvePath(input.path.trim())
+    if (!(await $.fs.exists(full))) return { result: t().noSuchFile(full) }
+    const flags: string[] = []
+    if (input.allowDowngrade === true) flags.push('-d')
+    if (input.allowTestOnly === true) flags.push('-t')
+    const outcome = await runInstall($, { path: full, flags })
+    if (outcome.ok) return { result: t().installed(outcome.last.package, versionText(outcome.last.versionName, outcome.last.versionCode)) }
+    if ('reason' in outcome) return { result: outcome.reason }
+    const f = outcome.failure
+    const hint = f.retry === 'reinstall' ? t().reinstallHint : f.retry === 'same' ? t().retryHint('the same input') : t().retryHint(f.retry === 'downgrade' ? 'allowDowngrade' : 'allowTestOnly')
+    return { result: `${t().installFailed(f.code, f.message)}\n${hint}` }
+  }).catch(() => ({ deny: 'apk_install failed' }))
+
+  on('tool.call', { tool: 'mcp__android-device__package_info' }, async ($, e) => {
+    if (!(await read($, isOn))) return { result: t().toolOff }
+    const at = await ready($)
+    if (!at) return { result: notice ?? t().failed }
+    const name = await namedPackage($, e)
+    if (!name) return { result: t().needPackage }
+    const a = await appInfo($, at.adb, at.s, name)
+    if (!a) return { result: t().noneInstalledInfo(name) }
+    const lines = [
+      `package: ${a.package}`,
+      `versionName: ${a.versionName ?? '?'}`,
+      `versionCode: ${a.versionCode ?? '?'}`,
+      `firstInstallTime: ${a.firstInstall ?? '?'}`,
+      `lastUpdateTime: ${a.lastUpdate ?? '?'}`,
+      `installer: ${a.installer ?? '-'}`,
+      `enabled: ${a.isEnabled}`,
+      `running: ${a.pid !== undefined ? `yes (pid ${a.pid})` : 'no'}`,
+    ]
+    return { result: lines.join('\n') }
+  }).catch(() => ({ deny: 'package_info failed' }))
+
+  on('tool.call', { tool: 'mcp__android-device__app_launch' }, async ($, e) => {
+    if (!(await read($, isOn))) return { result: t().toolOff }
+    const at = await ready($)
+    if (!at) return { result: notice ?? t().failed }
+    const name = await namedPackage($, e)
+    if (!name) return { result: t().needPackage }
+    const ok = await launch($, at.adb, at.s, name)
+    inBackground($, refreshStatus($))
+    return { result: ok ? t().launched(name) : t().launchFailed(name) }
+  }).catch(() => ({ deny: 'app_launch failed' }))
+
+  on('tool.call', { tool: 'mcp__android-device__app_stop' }, async ($, e) => {
+    if (!(await read($, isOn))) return { result: t().toolOff }
+    const at = await ready($)
+    if (!at) return { result: notice ?? t().failed }
+    const name = await namedPackage($, e)
+    if (!name) return { result: t().needPackage }
+    await forceStop($, at.adb, at.s, name)
+    inBackground($, refreshStatus($))
+    return { result: t().stopped(name) }
+  }).catch(() => ({ deny: 'app_stop failed' }))
+
+  on('tool.call', { tool: 'mcp__android-device__screenshot' }, async $ => {
+    if (!(await read($, isOn))) return { result: t().toolOff }
+    return { result: await doScreenshot($) }
+  }).catch(() => ({ deny: 'screenshot failed' }))
+
+  on('tool.call', { tool: 'mcp__android-device__apk_pull' }, async ($, e) => {
+    if (!(await read($, isOn))) return { result: t().toolOff }
+    const input = e as unknown as { package?: unknown }
+    const named = typeof input.package === 'string' && input.package.trim() !== '' ? input.package.trim() : undefined
+    if (named !== undefined && !isPackageName(named)) return { deny: t().badPackage(named) }
+    return { result: await doPull($, named) }
+  }).catch(() => ({ deny: 'apk_pull failed' }))
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const { Box, Text, Button } = $.ui.resolve(e)
+    // The terminal draws a label column and glyph bars; the desktop, the editor and the phone draw captions and colored bars
+    const isTui = e.surface === 'terminal'
+    const s = t()
+    const columns = e.props.bodyColumns ?? 80
+    const isNarrow = columns < NARROW
+    const isPaneOn = await read($, isOn)
+    const chosen = await read($, serial)
+    const p = await read($, pending)
+    const done = await read($, last)
+    const picking = await read($, pick)
+    const question = await read($, confirm)
+    const rec = await read($, recording)
+    const d = chosenDevice(chosen)
+    // A question locks the other keys until it is answered
+    const isLocked = question !== null || p?.failure !== undefined
+    const LABEL = 9
+    const pad = ''.padEnd(LABEL)
+    const BAR = isNarrow ? 8 : 12
+
+    if (!isPaneOn) {
+      return (
+        <Box flexDirection="column">
+          <Text dimColor>{s.turnedOff}</Text>
+        </Box>
+      )
+    }
+
+    type Line = { text: string; color?: string; isDim?: boolean }
+    // A detail line of parts; narrow, in two lines
+    const details = (parts: string[]): Line[] => {
+      const half = Math.ceil(parts.length / 2)
+      const rows = isNarrow && parts.length > 2 ? [parts.slice(0, half), parts.slice(half)] : [parts]
+      return rows.map(row => ({ text: row.join(' · '), isDim: true }))
+    }
+    const indent = (node: RenderChildren) => (
+      <Box>
+        <Text>{pad}</Text>
+        {node}
+      </Box>
+    )
+    // A blank row between the blocks
+    const gap = <Text> </Text>
+    // One block: its name, a note at the right, its lines, then what follows (bars, a list, buttons)
+    const block = (name: string, right: string | undefined, lines: Line[], ...rest: RenderChildren[]) => {
+      if (isTui && lines.length === 0) {
+        const [first, ...others] = rest
+        return (
+          <Box flexDirection="column">
+            <Box columnGap={1}>
+              <Text bold>{name.padEnd(LABEL - 1)}</Text>
+              {first}
+            </Box>
+            {others.map(node => (node ? indent(node) : null))}
+          </Box>
+        )
+      }
+      const shown = lines.length > 0 ? lines : [{ text: '' }]
+      if (isTui) {
+        return (
+          <Box flexDirection="column">
+            {shown.map((line, i) => (
+              <Box justifyContent="space-between">
+                <Text wrap="truncate-end">
+                  {i === 0 ? <Text bold>{name.padEnd(LABEL)}</Text> : pad}
+                  <Text color={line.color} dimColor={line.isDim}>
+                    {line.text}
+                  </Text>
+                </Text>
+                {i === 0 && right !== undefined && <Text dimColor>{right}</Text>}
+              </Box>
+            ))}
+            {rest.map(node => (node ? indent(node) : null))}
+          </Box>
+        )
+      }
+      return (
+        <Box flexDirection="column" marginTop={1}>
+          <Box justifyContent="space-between">
+            <Text size="caption" weight="semibold" dimColor>
+              {name.toUpperCase()}
+            </Text>
+            {right !== undefined && (
+              <Text size="caption" dimColor>
+                {right}
+              </Text>
+            )}
+          </Box>
+          {shown.map((line, i) => (
+            <Text size={i === 0 ? 'body' : 'caption'} weight={i === 0 ? 'semibold' : 'regular'} color={line.color} dimColor={line.isDim} wrap="truncate-end">
+              {line.text}
+            </Text>
+          ))}
+          {rest.map(node => (node ? <Box gap={1}>{node}</Box> : null))}
+        </Box>
+      )
+    }
+    // A bar of BAR cells: glyphs in the terminal, a colored strip elsewhere
+    const bar = (label: string, ratio: number, color: string, value: string) => {
+      const filled = barCells(ratio, BAR)
+      return (
+        <Text wrap="truncate-end">
+          <Text dimColor size="caption">
+            {label}{' '}
+          </Text>
+          {isTui ? (
+            <Text>
+              <Text color={color}>{'█'.repeat(filled)}</Text>
+              <Text dimColor>{'░'.repeat(BAR - filled)}</Text>
+            </Text>
+          ) : (
+            <Text mono>
+              <Text backgroundColor={color}>{' '.repeat(filled)}</Text>
+              <Text backgroundColor="inactive">{' '.repeat(BAR - filled)}</Text>
+            </Text>
+          )}
+          <Text size="caption" tabular>
+            {' '}
+            {value}
+          </Text>
+        </Text>
+      )
+    }
+    const buttons = (...nodes: RenderChildren[]) => <Box columnGap={1} flexWrap="wrap">{nodes.filter(Boolean)}</Box>
+    const ask = (text: string) => (
+      <Box columnGap={1} flexWrap="wrap">
+        <Text color="warning">{text}</Text>
+        <Button key="yes" hotkey="y" variant="primary" onPress={() => inBackground($, answerYes($))}>
+          {s.yes}
+        </Button>
+        <Button key="no" hotkey="n" role="dismiss" onPress={() => inBackground($, answerNo($))}>
+          {s.no}
+        </Button>
+      </Box>
+    )
+    const cancelPick = () => void update($, pick, () => 'none')
+    const digits = (items: { label: string; note: string; onPress: () => void; keyName: string }[]) => (
+      <Box flexDirection="column">
+        {items.slice(0, LIST_MAX).map((item, i) => (
+          <Box gap={1}>
+            <Button key={item.keyName} hotkey={String(i + 1)} onPress={item.onPress}>
+              {item.label}
+            </Button>
+            <Text dimColor size="caption">
+              {item.note}
+            </Text>
+          </Box>
+        ))}
+        <Box>
+          <Button key="cancel-pick" hotkey="x" role="dismiss" onPress={cancelPick}>
+            {s.cancel}
+          </Button>
+        </Box>
+      </Box>
+    )
+
+    // Device
+    const head = d ? describeDevice(d, info) : undefined
+    const deviceLines: Line[] =
+      !adbPath ? [{ text: s.noAdb, color: 'error' }]
+      : devices.length === 0 ? [{ text: s.noDevice, color: 'error' }]
+      : !d || !head ? [{ text: s.pickDevice, color: 'warning' }]
+      : [{ text: head.head.join(' · '), color: d.state === 'device' ? 'success' : 'warning' }, ...details(head.detail)]
+    const batteryColor = (pct: number) => (pct >= 50 ? 'success' : pct >= 20 ? 'warning' : 'error')
+    const gaugeNodes = [
+      d && info?.battery !== undefined ? bar(s.batteryLabel, info.battery / 100, batteryColor(info.battery), `${info.battery}%`) : null,
+      d && info?.storage ? bar(s.storageLabel, 1 - info.storage.freeBytes / info.storage.totalBytes, 'suggestion', s.freeOf(formatBytes(info.storage.freeBytes), formatBytes(info.storage.totalBytes))) : null,
+    ].filter(Boolean)
+    // Both fit on one row from about 70 cells; under that, one row each
+    const gauges =
+      gaugeNodes.length === 0 ? null
+      : columns - LABEL >= 70 ? <Box columnGap={3}>{gaugeNodes}</Box>
+      : <Box flexDirection="column">{gaugeNodes}</Box>
+    const deviceRest =
+      isLocked ? null
+      : picking === 'device' ?
+        digits(
+          devices.map((x, i) => ({
+            keyName: `device-${i + 1}`,
+            label: deviceLabel(x),
+            note: x.state === 'device' ? (x.transport === 'usb' ? s.usb : x.transport === 'wifi' ? s.wifi : '') : x.state,
+            onPress: () => {
+              if (x.state !== 'device') return
+              inBackground($, update($, serial, () => x.serial).then(() => update($, pick, () => 'none')).then(() => refreshStatus($)))
+            },
+          })),
+        )
+      : devices.length > 1 ?
+        buttons(
+          <Button key="switch" hotkey="d" onPress={() => void update($, pick, () => 'device')}>
+            {s.switchDevice}
+          </Button>,
+        )
+      : null
+
+    // App
+    const appLines: Line[] =
+      !pkg && !base ? [{ text: s.packageNotSet, isDim: true }]
+      : app ? [{ text: pkg ?? '' }, ...details(describeApp(app))]
+      : [{ text: pkg ?? base ?? '' }]
+    const appRight = !pkg && !base ? undefined : app ? s.installedState : s.notInstalled
+    const appRest =
+      question ? ask(question.kind === 'uninstall' ? s.askUninstall(pkg ?? '') : s.askClear(pkg ?? ''))
+      : app && !isLocked && picking === 'none' ?
+        buttons(
+          <Button key="launch" hotkey="l" onPress={() => inBackground($, doLaunch($))}>
+            {s.launch}
+          </Button>,
+          <Button key="stop" hotkey="s" onPress={() => inBackground($, doStop($))}>
+            {s.stop}
+          </Button>,
+          <Button key="uninstall" hotkey="u" onPress={() => void update($, confirm, () => ({ kind: 'uninstall' }))}>
+            {s.uninstall}
+          </Button>,
+          <Button key="clear" hotkey="c" onPress={() => void update($, confirm, () => ({ kind: 'clear' }))}>
+            {s.clearData}
+          </Button>,
+        )
+      : null
+
+    // Install
+    const seconds = installStartedAt !== undefined ? Math.max(0, Math.round((nowMs - installStartedAt) / 1000)) : 0
+    const failureAsk = (f: Failure) =>
+      f.retry === 'downgrade' ? s.askDowngrade : f.retry === 'test-only' ? s.askTestOnly : f.retry === 'reinstall' ? s.askReinstall(pkg ?? base ?? '') : s.askRetry(f.message)
+    const installLines: Line[] =
+      busy === 'install' ? [{ text: s.installing(installingFile, seconds), color: 'warning' }]
+      : p ? [{ text: s.pendingFile(basename(p.path)) }, ...details([relativeTo(cwd, dirname(p.path)) || '.', ...(p.flags.length > 0 ? [p.flags.join(' ')] : [])])]
+      : [{ text: s.dropHint, isDim: true }]
+    if (p?.failure && !question && busy !== 'install') {
+      installLines.push({ text: `${s.failedLine(p.failure.code)}${p.failure.retry === 'reinstall' && p.failure.message ? ` · ${p.failure.message}` : ''}`, color: 'error' })
+    }
+    const installRest =
+      p?.failure && !question ? ask(failureAsk(p.failure))
+      : !isLocked && picking === 'apk' ?
+        digits(
+          repo.apks.map((a, i) => ({
+            keyName: `apk-${i + 1}`,
+            label: relativeTo(cwd, a.path),
+            note: s.builtAt(formatStamp(a.mtimeMs)),
+            onPress: () => inBackground($, queue($, a.path)),
+          })),
+        )
+      : !isLocked && picking === 'none' && busy !== 'install' ?
+        buttons(
+          p && (
+            <Button key="install" hotkey="i" variant="primary" onPress={() => inBackground($, runInstall($, p))}>
+              {s.installButton}
+            </Button>
+          ),
+          repo.isAndroid && (
+            <Button key="pick-apk" hotkey="a" onPress={() => inBackground($, refreshRepo($).then(() => update($, pick, () => 'apk')))}>
+              {s.pickApk}
+            </Button>
+          ),
+          p && (
+            <Button key="cancel-install" hotkey="x" role="dismiss" onPress={() => void update($, pending, () => null)}>
+              {s.cancel}
+            </Button>
+          ),
+        )
+      : null
+    const apkNote = picking === 'apk' && repo.apks.length === 0 ? (repo.isAndroid ? s.noApks : s.notAndroidRepo) : undefined
+
+    // Last and Capture
+    // The last install in three lines: the file, the package it put on the device, the version with when and how long
+    const lastLines: Line[] = done ? [{ text: done.file }, { text: done.package }, { text: [versionText(done.versionName, done.versionCode), formatStamp(done.at), formatDuration(done.ms)].join(' \u00b7 '), isDim: true }] : []
+    const captureRest = (
+      <Box columnGap={1} flexWrap="wrap">
+        {!isLocked && picking === 'none' && (
+          <Button key="screenshot" hotkey="p" onPress={() => inBackground($, doScreenshot($))}>
+            {s.screenshot}
+          </Button>
+        )}
+        {!isLocked && picking === 'none' && (
+          <Button key="record" hotkey="v" onPress={() => inBackground($, toggleRecording($))}>
+            {rec ? s.stopRecord : s.record}
+          </Button>
+        )}
+        {!isLocked && picking === 'none' && (
+          <Button key="pull" hotkey="e" onPress={() => inBackground($, doPull($))}>
+            {s.pullApk}
+          </Button>
+        )}
+        {rec && <Text color="warning">{s.recording(formatClock(nowMs - rec.startedAt))}</Text>}
+        <Text dimColor size="caption" wrap="truncate-end">
+          {s.savedTo(options.outputDir || '~/Downloads')}
+        </Text>
+      </Box>
+    )
+
+    return (
+      <Box flexDirection="column">
+        <Box justifyContent="space-between">
+          <Text wrap="truncate-end">
+            <Text bold size="heading">
+              {s.title}
+            </Text>{' '}
+            <Text color={noticeColor} size="caption">
+              {notice ?? ''}
+            </Text>
+          </Text>
+          {!isLocked && (
+            <Button key="refresh" hotkey="r" onPress={() => inBackground($, refreshAll($))}>
+              {s.refresh}
+            </Button>
+          )}
+        </Box>
+        {block(s.device, devices.length > 0 ? s.connected(devices.length) : undefined, deviceLines, gauges, deviceRest)}
+        {isTui && gap}
+        {block(s.app, appRight, appLines, appRest)}
+        {isTui && gap}
+        {block(s.install, undefined, installLines, apkNote ? <Text dimColor>{apkNote}</Text> : null, installRest)}
+        {isTui && gap}
+        {done && block(s.last, undefined, lastLines)}
+        {done && isTui && gap}
+        {block(s.capture, undefined, [], captureRest)}
+      </Box>
+    )
+  })
+}
