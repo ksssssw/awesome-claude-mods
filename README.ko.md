@@ -90,6 +90,7 @@ claude plugin uninstall step-tracker@awesome-claude-mods
 | Mod | 하는 일 | 위치 | 토큰 | 버전 |
 | --- | --- | --- | --- | --- |
 | [step-tracker](mods/step-tracker/README.ko.md) | 계획 단계, 지금 하는 일, 방금 끝낸 호출, 걸어 다니는 캐릭터가 있는 실시간 활동 그래프, 백그라운드 에이전트와 셸, 브랜치를 테두리 상자 하나에 보여 줍니다 | 프롬프트 위 band | 0 | 0.7.0 |
+| [android-logcat](mods/android-logcat/README.ko.md) | 연결된 안드로이드 단말의 logcat을 레포의 앱 기준으로 Android Studio처럼 레벨별 색을 입혀 보여 주고, 최소 레벨·텍스트 필터와 Claude용 `logcat_read` 도구를 제공합니다 | 대화 옆 pane | 꺼짐 0, 켜짐 도구 1개 | 0.1.0 |
 
 ## 원칙
 
