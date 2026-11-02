@@ -82,6 +82,19 @@ export type Strings = {
   record: string
   stopRecord: string
   pullApk: string
+  shotLabel: string
+  videoLabel: string
+  apkLabel: string
+  open: string
+  reveal: string
+  play: string
+  stopPlay: string
+  closeItem: string
+  openFailed: string
+  preparing: string
+  playing: (clock: string) => string
+  splits: (count: number) => string
+  noFfmpeg: string
   // Results
   installed: (pkg: string, version: string) => string
   installFailed: (code: string, message: string) => string
@@ -198,6 +211,19 @@ const EN: Strings = {
   record: 'Record',
   stopRecord: 'Stop recording',
   pullApk: 'Pull APK',
+  shotLabel: 'Shot',
+  videoLabel: 'Video',
+  apkLabel: 'APK',
+  open: 'Open',
+  reveal: 'Folder',
+  play: '\u25b6 Play',
+  stopPlay: '\u25a0 Stop',
+  closeItem: 'Close',
+  openFailed: 'could not open the file',
+  preparing: 'preparing frames\u2026',
+  playing: clock => `playing ${clock}`,
+  splits: count => `+${count} split${count === 1 ? '' : 's'}`,
+  noFfmpeg: 'no ffmpeg: opening the recording in the system player',
   installed: (pkg, version) => `installed ${pkg} ${version}`,
   installFailed: (code, message) => `install failed: ${code}${message ? ` (${message})` : ''}`,
   retryHint: flag => `Press y in the adb pane, or call apk_install again with ${flag}, to retry.`,
@@ -312,6 +338,19 @@ const KO: Strings = {
   record: '녹화',
   stopRecord: '녹화 정지',
   pullApk: 'APK 추출',
+  shotLabel: '화면',
+  videoLabel: '녹화',
+  apkLabel: 'APK',
+  open: '열기',
+  reveal: '폴더',
+  play: '\u25b6 재생',
+  stopPlay: '\u25a0 정지',
+  closeItem: '닫기',
+  openFailed: '파일을 열지 못했습니다',
+  preparing: '프레임 준비 중\u2026',
+  playing: clock => `재생 중 ${clock}`,
+  splits: count => `split ${count}개`,
+  noFfmpeg: 'ffmpeg가 없어 시스템 플레이어로 엽니다',
   installed: (pkg, version) => `${pkg} ${version} 설치됨`,
   installFailed: (code, message) => `설치 실패: ${code}${message ? ` (${message})` : ''}`,
   retryHint: flag => `adb 패널에서 y를 누르거나 ${flag}로 apk_install을 다시 부르면 재시도합니다.`,

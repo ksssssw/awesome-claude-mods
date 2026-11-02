@@ -329,3 +329,44 @@ export function pulledName(pkg: string, versionName: string | undefined, version
   const file = basename(remote)
   return file === 'base.apk' ? `${stem}.apk` : `${stem}_${file}`
 }
+
+const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+
+// A PNG's width and height from its IHDR, read off the first 32 base64 characters; undefined when it is not a PNG
+export function pngSize(base64: string): { width: number; height: number } | undefined {
+  const head = base64.slice(0, 32)
+  if (head.length < 32) return undefined
+  const bytes: number[] = []
+  for (let i = 0; i < 32; i += 4) {
+    const n = [0, 1, 2, 3].map(k => B64.indexOf(head[i + k] ?? ''))
+    if (n.some(v => v < 0)) return undefined
+    const v = (n[0]! << 18) | (n[1]! << 12) | (n[2]! << 6) | n[3]!
+    bytes.push((v >> 16) & 255, (v >> 8) & 255, v & 255)
+  }
+  const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+  if (sig.some((b, i) => bytes[i] !== b)) return undefined
+  const u32 = (at: number) => ((bytes[at]! << 24) >>> 0) + (bytes[at + 1]! << 16) + (bytes[at + 2]! << 8) + bytes[at + 3]!
+  const width = u32(16)
+  const height = u32(20)
+  return width > 0 && height > 0 ? { width, height } : undefined
+}
+
+// The cells a picture of width x height takes within maxColumns x maxRows, a cell being about twice as tall as wide
+export function fitCells(width: number, height: number, maxColumns: number, maxRows: number): { columns: number; rows: number } {
+  const clamp = (n: number) => Math.max(1, Math.min(255, Math.round(n)))
+  const ratio = (2 * width) / height
+  let rows = maxRows
+  let columns = rows * ratio
+  if (columns > maxColumns) {
+    columns = maxColumns
+    rows = columns / ratio
+  }
+  return { columns: clamp(columns), rows: clamp(rows) }
+}
+
+// "~/Downloads/x.png" for a path under home; the path as it is elsewhere
+export function tildePath(path: string, home: string | undefined): string {
+  if (!home) return path
+  const root = home.replace(/\/+$/, '')
+  return path === root ? '~' : path.startsWith(`${root}/`) ? `~${path.slice(root.length)}` : path
+}

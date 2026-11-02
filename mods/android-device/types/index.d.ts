@@ -37,6 +37,15 @@ export type Confirm = { kind: 'uninstall' | 'clear' } | null
 // A screen recording in progress on the device
 export type Recording = { startedAt: number; remote: string; local: string; serial: string } | null
 
+// The last screenshot, previewed under Capture: its file, its size in pixels, when, and a number that changes with each shot
+export type LastShot = { path: string; width?: number; height?: number; at: number; generation: number } | null
+
+// The last recording: its file, a poster frame (absent where none could be made) and its size, length and when
+export type LastVideo = { path: string; poster?: string; width?: number; height?: number; seconds: number; at: number; generation: number } | null
+
+// The last APK pull: the package, its version, and the files (the base first, then the splits)
+export type LastPull = { package: string; version?: string; paths: string[]; at: number } | null
+
 // The values this mod keeps in $.state, by key
 declare module 'claude-code' {
   interface PluginState {
@@ -49,6 +58,9 @@ declare module 'claude-code' {
       pick: Pick
       confirm: Confirm
       recording: Recording
+      lastShot: LastShot
+      lastVideo: LastVideo
+      lastPull: LastPull
     }
   }
 }

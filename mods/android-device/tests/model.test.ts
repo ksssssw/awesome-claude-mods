@@ -7,6 +7,7 @@ import {
   captureName,
   chooseSerial,
   classifyFailure,
+  fitCells,
   flagOf,
   isApplicationModule,
   isPackageName,
@@ -19,6 +20,7 @@ import {
   parseDumpsysPackage,
   parseScreen,
   parsePmPath,
+  pngSize,
   foregroundPackage,
   pulledName,
   refineFailure,
@@ -195,4 +197,18 @@ test('the foreground app and its APK paths are read from dumpsys and pm path', a
   expect(pulledName('com.example.app', '2.3.1', 2310, paths[0]!)).toBe('com.example.app_2.3.1_2310.apk')
   expect(pulledName('com.example.app', '2.3.1', 2310, paths[1]!)).toBe('com.example.app_2.3.1_2310_split_config.en.apk')
   expect(pulledName('com.example.app', undefined, undefined, paths[0]!)).toBe('com.example.app.apk')
+})
+
+test('a PNG header gives the picture size; anything else gives none', () => {
+  // An IHDR of 1856 x 2160, the inner screen of a foldable
+  expect(pngSize('iVBORw0KGgoAAAANSUhEUgAAB0AAAAhwCAYAAAA=')).toEqual({ width: 1856, height: 2160 })
+  expect(pngSize('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7')).toBeUndefined()
+  expect(pngSize('iVBORw0K')).toBeUndefined()
+})
+
+test('a picture fits its box keeping its shape, a cell being twice as tall as wide', () => {
+  // A portrait phone 1080 x 2340 in 24 rows: about 22 columns
+  expect(fitCells(1080, 2340, 80, 24)).toEqual({ columns: 22, rows: 24 })
+  // A landscape picture in a narrow pane is held by the columns
+  expect(fitCells(2340, 1080, 40, 24)).toEqual({ columns: 40, rows: 9 })
 })

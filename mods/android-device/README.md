@@ -30,6 +30,10 @@ Last     app-debug.apk
          com.example.app.debug
          v2.3.1 (2310) · 11-02 14:20 · 8.4s
 Capture  (p) Screenshot  (v) Record  (e) Pull APK                → ~/Downloads
+
+Shot     ▓▓▓▓▓▓▓▓  ~/Downloads/Pixel_7_20261102-142011.png
+         ▓▓▓▓▓▓▓▓  1080×2400 · 11-02 14:20
+         ▓▓▓▓▓▓▓▓  (o) Open  Folder  Close
 ```
 
 The desktop app, the editor and the phone draw the same blocks as cards: a small caption heads each (`DEVICE`, `APP`, `INSTALL`), the first line is bold, the gauges are colored strips, and the buttons are buttons. Where the surface seats the pane (docked beside a fullscreen transcript, or inline above the prompt in a narrower terminal) is the surface's choice.
@@ -38,7 +42,7 @@ The desktop app, the editor and the phone draw the same blocks as cards: a small
 - **App**: the repo's package as installed on the device: version name and code, when it was last updated, who installed it, whether it is disabled, whether it runs. `not installed` when it is not there.
 - **Install**: the APK that waits, where it came from and the flags a retry added. While an install runs the row counts the seconds; when it fails, the reason and a question take the row (below).
 - **Last**: the file the last install sent, the package it put on the device and its version, read back from the device itself, with when and how long it took.
-- **Capture**: screenshots and recordings go to `~/Downloads` (or `outputDir`) as `<model>_<yyyyMMdd-HHmmss>.png` or `.mp4`. `Pull APK` copies the APK of the app in the foreground to the same folder as `<package>_<versionName>_<versionCode>.apk`; an app installed as splits comes as several files, `_split_config.en.apk` and the like after the base.
+- **Capture**: screenshots and recordings go to `~/Downloads` (or `outputDir`) as `<model>_<yyyyMMdd-HHmmss>.png` or `.mp4`. What Capture made stays under it as items, Shot, Video and APK: the path, pressed to open (an APK's opens its folder), a line of facts, and Open, Folder and Close. In a terminal that draws pictures (Ghostty, kitty, iTerm2 3.5 and later; inside tmux with `allow-passthrough` on) the screenshot and the recording's first frame are drawn beside them; `Play` plays the recording in the pane with ffmpeg (else in the system player). `Pull APK` copies the APK of the app in the foreground to the same folder as `<package>_<versionName>_<versionCode>.apk`; an app installed as splits comes as several files, `_split_config.en.apk` and the like after the base.
 - **Status line**: `adb Pixel 7 · com.example.app.debug v2.3.1 (2310)`; `adb installing app-debug.apk…` and `adb recording 00:42` while those run.
 
 ## Installing an APK
@@ -66,7 +70,7 @@ After a success the Last row shows the package, `versionName` and `versionCode` 
 ## Interaction
 
 - `/adb` turns the pane on; `/adb` again, `/adb off` or closing the pane (Ctrl+X X) turns it off and stops polling.
-- With the pane focused (Ctrl+X Tab): `r` refreshes, `d` then `1`–`9` picks a device, `l` launches the app, `s` force-stops it, `u` uninstalls and `c` clears its data (each after a `y`/`n` question), `i` installs the waiting APK, `a` lists the repo's APKs, `x` cancels, `p` takes a screenshot, `v` starts and stops a recording (three minutes at most, the `screenrecord` limit), `e` pulls the APK of the app in the foreground.
+- With the pane focused (Ctrl+X Tab): `r` refreshes, `d` then `1`–`9` picks a device, `l` launches the app, `s` force-stops it, `u` uninstalls and `c` clears its data (each after a `y`/`n` question), `i` installs the waiting APK, `a` lists the repo's APKs, `x` cancels, `p` takes a screenshot, `o` opens it, `k` plays or stops the last recording in the pane, `v` starts and stops a recording (three minutes at most, the `screenrecord` limit), `e` pulls the APK of the app in the foreground.
 - `/adb select <serial|n>`, `/adb install <path>`, `/adb apk`, `/adb package <name>` (follow another package this session), `/adb launch`, `/adb stop`, `/adb uninstall`, `/adb clear`, `/adb screenshot`, `/adb record`, `/adb pull [<package>]`, `/adb refresh` do the same from the prompt. `uninstall` and `clear` still ask in the pane.
 - Claude's tools while the pane is on: `device_list`, `apk_list`, `apk_install` (`path`, `allowDowngrade`, `allowTestOnly`), `package_info`, `app_launch`, `app_stop`, `screenshot`, `apk_pull` (`package`, default the app in the foreground). A failed `apk_install` tells Claude why and that `y` in the pane, or the call again with the flag, retries; it never retries by itself, and uninstall, clear data and recording are not tools.
 
