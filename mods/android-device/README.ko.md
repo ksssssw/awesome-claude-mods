@@ -30,6 +30,10 @@ adb                                                            (r) 새로 고침
          com.example.app.debug
          v2.3.1 (2310) · 11-02 14:20 · 8.4s
 캡처     (p) 스크린샷  (v) 녹화  (e) APK 추출                        → ~/Downloads
+
+화면     ▓▓▓▓▓▓▓▓  ~/Downloads/Pixel_7_20261102-142011.png
+         ▓▓▓▓▓▓▓▓  1080×2400 · 11-02 14:20
+         ▓▓▓▓▓▓▓▓  (o) 열기  폴더  닫기
 ```
 
 데스크탑 앱, 에디터, 휴대폰에서는 같은 블록을 카드처럼 그립니다. 작은 캡션(`DEVICE`, `APP`, `INSTALL`)이 블록을 이끌고, 첫 줄은 굵게, 게이지는 색 띠로, 버튼은 버튼으로 나옵니다. 패널이 어디에 놓일지(풀스크린 대화 옆 dock, 좁은 터미널에서는 프롬프트 위 inline)는 서피스가 정합니다.
@@ -38,7 +42,7 @@ adb                                                            (r) 새로 고침
 - **앱**: 단말에 설치된 레포의 패키지: 버전 이름·코드, 마지막 업데이트 시각, 설치 경로, 비활성 여부, 실행 여부. 없으면 `미설치`.
 - **설치**: 대기 중인 APK, 출처, 재시도에 붙은 플래그. 설치 중에는 경과 초를 세고, 실패하면 그 자리에 이유와 질문이 뜹니다(아래).
 - **최근**: 마지막 설치에 쓴 파일, 단말에 올라간 패키지와 버전(단말에서 다시 읽은 값), 설치 시각과 소요 시간을 세 줄로 보여 줍니다.
-- **캡처**: 스크린샷과 녹화는 `~/Downloads`(또는 `outputDir`)에 `<모델>_<yyyyMMdd-HHmmss>.png`·`.mp4`로 저장됩니다. `APK 추출`은 포그라운드 앱의 APK를 같은 폴더에 `<패키지>_<versionName>_<versionCode>.apk`로 복사합니다. split으로 설치된 앱은 base 뒤에 `_split_config.en.apk` 같은 파일이 여러 개 나옵니다.
+- **캡처**: 스크린샷과 녹화는 `~/Downloads`(또는 `outputDir`)에 `<모델>_<yyyyMMdd-HHmmss>.png`·`.mp4`로 저장됩니다. 캡처 결과는 버튼 아래에 화면·녹화·APK 항목으로 남습니다. 항목마다 경로(누르면 열림, APK는 폴더가 열림), 정보 한 줄, `열기`·`폴더`·`닫기` 버튼이 있습니다. 이미지를 그리는 터미널(Ghostty, kitty, iTerm2 3.5 이상, tmux 안에서는 `allow-passthrough`를 켠 경우)에서는 스크린샷과 녹화의 첫 프레임이 옆에 그려집니다. `재생`은 ffmpeg가 있으면 패널 안에서 녹화를 재생하고, 없으면 시스템 플레이어로 엽니다. `APK 추출`은 포그라운드 앱의 APK를 같은 폴더에 `<패키지>_<versionName>_<versionCode>.apk`로 복사합니다. split으로 설치된 앱은 base 뒤에 `_split_config.en.apk` 같은 파일이 여러 개 나옵니다.
 - **상태 줄**: `adb Pixel 7 · com.example.app.debug v2.3.1 (2310)`. 설치 중엔 `adb app-debug.apk 설치 중…`, 녹화 중엔 `adb 녹화 중 00:42`.
 
 ## APK 설치
@@ -66,7 +70,7 @@ APK를 설치 블록에 올리는 방법은 세 가지이고, `i`를 누르면 �
 ## 조작
 
 - `/adb`로 켜고, 다시 `/adb`, `/adb off`, 또는 패널 닫기(Ctrl+X X)로 끕니다. 끄면 폴링도 멈춥니다.
-- 패널에 포커스를 주고(Ctrl+X Tab): `r` 새로 고침, `d` 뒤 `1`~`9` 단말 선택, `l` 실행, `s` 강제 종료, `u` 삭제, `c` 데이터 초기화(둘 다 `y`/`n` 질문 뒤), `i` 대기 중 APK 설치, `a` 레포 APK 목록, `x` 취소, `p` 스크린샷, `v` 녹화 시작·정지(최대 3분, `screenrecord`의 한계), `e` 포그라운드 앱의 APK 추출.
+- 패널에 포커스를 주고(Ctrl+X Tab): `r` 새로 고침, `d` 뒤 `1`~`9` 단말 선택, `l` 실행, `s` 강제 종료, `u` 삭제, `c` 데이터 초기화(둘 다 `y`/`n` 질문 뒤), `i` 대기 중 APK 설치, `a` 레포 APK 목록, `x` 취소, `p` 스크린샷, `o` 스크린샷 열기, `k` 녹화 재생·정지, `v` 녹화 시작·정지(최대 3분, `screenrecord`의 한계), `e` 포그라운드 앱의 APK 추출.
 - `/adb select <serial|n>`, `/adb install <경로>`, `/adb apk`, `/adb package <이름>`(이번 세션 동안 다른 패키지), `/adb launch`, `/adb stop`, `/adb uninstall`, `/adb clear`, `/adb screenshot`, `/adb record`, `/adb pull [<패키지>]`, `/adb refresh`로 프롬프트에서도 같은 일을 합니다. `uninstall`과 `clear`는 패널에서 다시 묻습니다.
 - 켜 둔 동안 Claude의 도구: `device_list`, `apk_list`, `apk_install`(`path`, `allowDowngrade`, `allowTestOnly`), `package_info`, `app_launch`, `app_stop`, `screenshot`, `apk_pull`(`package`, 기본은 포그라운드 앱). `apk_install`이 실패하면 이유와 함께 "패널에서 y를 누르거나 플래그를 넘겨 다시 부르면 재시도된다"고 알려 줍니다. 스스로 재시도하지 않으며, 삭제·데이터 초기화·녹화는 도구로 노출하지 않습니다.
 

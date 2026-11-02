@@ -261,3 +261,35 @@ async function collectApks($: EngineInterface, dir: string, depth: number, into:
     else if (entry.kind === 'dir' && depth < APK_DEPTH) await collectApks($, path, depth + 1, into)
   }
 }
+
+// Opens a file in the system's viewer (open on macOS, else xdg-open); with reveal, its folder with the file selected
+export async function openFile($: EngineInterface, path: string, reveal = false): Promise<boolean> {
+  if ((await runs($, reveal ? ['open', '-R', path] : ['open', path])) !== undefined) return true
+  return (await runs($, ['xdg-open', reveal ? path.replace(/\/[^/]*$/, '') || '/' : path])) !== undefined
+}
+
+// ffmpeg on PATH or where Homebrew puts it; null when there is none (a recording then plays outside the pane)
+export async function findFfmpeg($: EngineInterface): Promise<string | null> {
+  for (const path of ['ffmpeg', '/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg']) {
+    if ((await runs($, [path, '-version'])) !== undefined) return path
+  }
+  return null
+}
+
+const FRAME_TIMEOUT = 60_000
+
+// The first frame of a video as a PNG: by ffmpeg, else by macOS Quick Look; the PNG's path, or undefined
+export async function videoPoster($: EngineInterface, ffmpeg: string | null, video: string, dir: string, name: string): Promise<string | undefined> {
+  await runs($, ['mkdir', '-p', dir])
+  const out = `${dir}/${name}.poster.png`
+  if (ffmpeg && (await runs($, [ffmpeg, '-v', 'error', '-y', '-i', video, '-frames:v', '1', '-vf', 'scale=720:-2', out], FRAME_TIMEOUT)) !== undefined) return out
+  // qlmanage writes <dir>/<file name>.png
+  if ((await runs($, ['qlmanage', '-t', '-s', '1024', '-o', dir, video], FRAME_TIMEOUT)) !== undefined) return `${dir}/${video.replace(/^.*\//, '')}.png`
+  return undefined
+}
+
+// A video's frames as PNGs at `fps` into `dir`; true when ffmpeg finished
+export async function videoFrames($: EngineInterface, ffmpeg: string, video: string, dir: string, fps: number): Promise<boolean> {
+  await runs($, ['mkdir', '-p', dir])
+  return (await runs($, [ffmpeg, '-v', 'error', '-y', '-i', video, '-vf', `fps=${fps},scale=480:-2`, `${dir}/f%04d.png`], FRAME_TIMEOUT)) !== undefined
+}

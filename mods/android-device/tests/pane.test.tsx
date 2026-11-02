@@ -47,17 +47,27 @@ type Adb = {
   install: string
   // Whether the app is installed, for `cmd package list` and `dumpsys package`
   isInstalled: boolean
+  // The frames swapped into the video Image, in order
+  blits: string[]
 }
 
 // Nothing sits beneath the plugin: these hooks stand for the engine, for adb and for the repo on disk
 function engine(on: On, devices = ONE): Adb {
   const clock = mock.clock(on)
-  const adb: Adb = { clock, fills: [], runs: [], devices, install: 'Performing Streamed Install\nSuccess\n', isInstalled: true }
+  const adb: Adb = { clock, fills: [], runs: [], devices, install: 'Performing Streamed Install\nSuccess\n', isInstalled: true, blits: [] }
   mock.env(on, { HOME: '/tmp/nobody' })
   on('command.register', () => ({ value: { command: 'adb' } }))
   on('tool.register', (_, e) => ({ value: { tool: `mcp__android-device__${e.name}` } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.close', () => ({ value: undefined }))
+  on('ui.blit', (_, e) => {
+    if ('source' in e) adb.blits.push((e.source as { file: string }).file)
+    return { value: {} }
+  })
+  // screenrecord: the child ends at once, as at its limit
+  on('process.spawn', async function* () {
+    return { value: { code: 0, signal: null } }
+  })
   on('ui.invalidate', () => ({ value: undefined }))
   on('ui.status', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
@@ -82,12 +92,16 @@ function engine(on: On, devices = ONE): Adb {
       case '/repo/app/build/outputs/apk/release':
         return { value: [entry('app-release.apk', 'file', 1000)] }
       default:
+        // The frames ffmpeg wrote for in-pane playback
+        if (e.path.endsWith('.frames') && adb.runs.some(argv => argv.some(a => a.startsWith('fps=')))) return { value: Array.from({ length: 30 }, (_, i) => entry(`f${String(30 - i).padStart(4, '0')}.png`, 'file')) }
         throw new Error('ENOENT')
     }
   })
   on('fs.read', (_, e) => {
     if (e.path === '/repo/app/build.gradle.kts') return { value: 'plugins { id("com.android.application") }\nandroid { defaultConfig { applicationId = "com.example.app" } }' }
     if (e.path === '/repo/build.gradle.kts') return { value: 'plugins { id("com.android.application") version "8.5.0" apply false }' }
+    // A screenshot pulled to the capture folder, or a recording's poster: a PNG header of 1856 x 2160
+    if (e.path.endsWith('.png')) return { value: { base64: 'iVBORw0KGgoAAAANSUhEUgAAB0AAAAhwCAYAAAA=' } }
     throw new Error('ENOENT')
   })
   on('process.run', (_, e) => {
@@ -114,6 +128,8 @@ function engine(on: On, devices = ONE): Adb {
     if (line.includes('pm clear')) return ran('Success\n')
     if (line.includes('dumpsys activity activities')) return ran('  topResumedActivity=ActivityRecord{1 u0 com.example.app.debug/.MainActivity t5}\n')
     if (line.includes('pm path')) return ran('package:/data/app/~~x==/com.example.app.debug-y==/base.apk\n')
+    if (argv[0] === 'open' || argv[0] === 'mkdir') return ran('')
+    if (argv[0] === 'ffmpeg') return ran(argv[1] === '-version' ? 'ffmpeg version 7.1\n' : '')
     if (line.includes('screencap') || argv[3] === 'pull' || line.includes(' rm -f')) return ran('')
     return ran('', 1)
   })
@@ -345,5 +361,96 @@ test('with language set to ko the pane draws in Korean', { options: { language: 
   expect(await ui.find({ type: 'Text', text: /설치됨/ })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'launch', text: /실행/ })).toBeDefined()
   await ui.unmount()
+  await $.command.run({ command: 'adb', args: 'off', ...COMMAND } as never)
+})
+
+test('p previews the screenshot with its path; the path and o open it, Folder reveals it, Close drops the item', async ($, on) => {
+  const adb = engine(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await turnOn($, adb)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Image' })).toBeUndefined()
+
+  await ui.press({ key: 'screenshot' })
+  await settle(adb)
+  const image = await ui.find({ type: 'Image', key: 'shot' })
+  expect(image).toBeDefined()
+  const props = image!.props as { source: { file: string; format: string; generation: number }; columns: number; rows: number }
+  expect(props.source.file).toMatch(/^\/tmp\/nobody\/Downloads\/Pixel_8_\d{8}-\d{6}\.png$/)
+  // 1856 x 2160 keeps its shape: about 1.7 columns a row, give or take a cell's rounding
+  const ratio = props.columns / props.rows
+  expect(ratio > 1.6 && ratio < 1.9).toBe(true)
+  // The path under home is drawn with ~ and is itself a button
+  expect(await ui.find({ type: 'Button', key: 'shot-path', text: /^~\/Downloads\/Pixel_8_\d{8}-\d{6}\.png$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /1856×2160/ })).toBeDefined()
+
+  await ui.press({ key: 'screenshot' })
+  await settle(adb)
+  const again = (await ui.find({ type: 'Image', key: 'shot' }))!.props as { source: { generation: number } }
+  expect(again.source.generation).toBe(props.source.generation + 1)
+
+  await ui.press({ key: 'shot-path' })
+  await ui.press({ key: 'shot-reveal' })
+  await settle(adb)
+  expect(adb.runs.filter(argv => argv[0] === 'open' && argv[1]?.endsWith('.png'))).toHaveLength(1)
+  expect(adb.runs.find(argv => argv[0] === 'open' && argv[1] === '-R')).toBeDefined()
+
+  // Elsewhere than the terminal the item is its path and buttons, no picture
+  const gui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await gui.find({ type: 'Button', key: 'shot-path' })).toBeDefined()
+  expect(await gui.find({ type: 'Image' })).toBeUndefined()
+
+  await ui.press({ key: 'shot-close' })
+  await settle(adb)
+  expect(await ui.find({ type: 'Image' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'shot-path' })).toBeUndefined()
+  await $.command.run({ command: 'adb', args: 'off', ...COMMAND } as never)
+})
+
+test('a finished recording shows its poster; k plays its frames in the pane and stops at the end', async ($, on) => {
+  const adb = engine(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await turnOn($, adb)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  await ui.press({ key: 'record' })
+  for (let i = 0; i < 4; i++) await adb.clock.advance(1000)
+  const poster = await ui.find({ type: 'Image', key: 'video' })
+  expect(poster).toBeDefined()
+  expect((poster!.props as { source: { file: string } }).source.file).toMatch(/\/tmp\/android-device\/Pixel_8_\d{8}-\d{6}\.poster\.png$/)
+  expect(await ui.find({ type: 'Button', key: 'video-path', text: /^~\/Downloads\/Pixel_8_.*\.mp4$/ })).toBeDefined()
+
+  await ui.press({ key: 'play' })
+  await settle(adb)
+  expect(adb.runs.find(argv => argv[0] === 'ffmpeg' && argv.includes('fps=10,scale=480:-2'))).toBeDefined()
+  // This engine's ui.invalidate is a stub: redraw by hand to see what the pane would draw now
+  const fresh = async () => {
+    await ui.redraw()
+    return ui
+  }
+  expect(await (await fresh()).find({ type: 'Button', key: 'play', text: /Stop/ })).toBeDefined()
+  // Ten frames a second, in name order
+  expect(adb.blits.slice(0, 3).map(f => f.replace(/^.*\//, ''))).toEqual(['f0002.png', 'f0003.png', 'f0004.png'])
+  for (let i = 0; i < 30; i++) await adb.clock.advance(100)
+  expect(adb.blits).toHaveLength(29)
+  // Past the last frame the poster is back and Play with it
+  const after = await fresh()
+  expect(await after.find({ type: 'Button', key: 'play', text: /Play/ })).toBeDefined()
+  expect((await after.find({ type: 'Image', key: 'video' }))!.props).toMatchObject({ source: { file: expect.stringMatching(/poster\.png$/) } })
+  await $.command.run({ command: 'adb', args: 'off', ...COMMAND } as never)
+})
+
+test('Pull APK leaves an item whose path reveals the file in its folder', async ($, on) => {
+  const adb = engine(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await turnOn($, adb)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'pull' })
+  await settle(adb)
+  expect(await ui.find({ type: 'Button', key: 'pull-path', text: '~/Downloads/com.example.app.debug_2.3.1_2310.apk' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /com\.example\.app\.debug · v2\.3\.1 \(2310\)/ })).toBeDefined()
+  await ui.press({ key: 'pull-path' })
+  await settle(adb)
+  expect(adb.runs.find(argv => argv[0] === 'open' && argv[1] === '-R' && argv[2]?.endsWith('.apk'))).toBeDefined()
   await $.command.run({ command: 'adb', args: 'off', ...COMMAND } as never)
 })

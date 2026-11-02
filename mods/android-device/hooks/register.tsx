@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren, Timer, ToolDescribeInput, ToolDescribeResult } from 'claude-code'
 
-import type { Confirm, Failure, LastInstall, Pending, Pick, Recording } from '../types'
+import type { Confirm, Failure, LastInstall, LastVideo, Pending, Pick, Recording } from '../types'
 import {
   apkPaths,
   appInfo,
@@ -10,11 +10,13 @@ import {
   deviceInfo,
   findAapt,
   findAdb,
+  findFfmpeg,
   forceStop,
   foregroundApp,
   install,
   launch,
   listDevices,
+  openFile,
   pull,
   pullFile,
   recordArgv,
@@ -23,6 +25,8 @@ import {
   screenshot,
   stopRecording,
   uninstall,
+  videoFrames,
+  videoPoster,
 } from './adb'
 import type { Repo } from './adb'
 import { setLanguage, t } from './i18n'
@@ -38,15 +42,18 @@ import {
   formatBytes,
   formatClock,
   formatDuration,
+  fitCells,
   formatStamp,
   isAbsolute,
   isPackageName,
   clampInt,
   isSerial,
+  pngSize,
   pulledName,
   refineFailure,
   relativeTo,
   shortStamp,
+  tildePath,
 } from './model'
 import type { AppInfo, Badging, Device, DeviceInfo } from './model'
 
@@ -75,6 +82,9 @@ const last = atom({ plugin: 'android-device', key: 'last' } as const, null)
 const pick = atom({ plugin: 'android-device', key: 'pick' } as const, 'none')
 const confirm = atom({ plugin: 'android-device', key: 'confirm' } as const, null)
 const recording = atom({ plugin: 'android-device', key: 'recording' } as const, null)
+const lastShot = atom({ plugin: 'android-device', key: 'lastShot' } as const, null)
+const lastVideo = atom({ plugin: 'android-device', key: 'lastVideo' } as const, null)
+const lastPull = atom({ plugin: 'android-device', key: 'lastPull' } as const, null)
 
 type Options = { package: string; serial: string; outputDir: string; grantPermissions: boolean; rows: number }
 
@@ -104,6 +114,13 @@ let recordStream: AsyncGenerator<unknown, unknown> | undefined
 let recordingNow: Recording = null
 let isToolRegistered = false
 let lastStatusLine: string | undefined
+// ffmpeg's path once looked for; null when there is none
+let ffmpegPath: string | null | undefined
+// A recording playing in the pane: its frames, the one shown and the timer that moves on
+let player: { path: string; frames: string[]; i: number; timer: Timer } | undefined
+let preparingVideo: string | undefined
+// Frames a second of in-pane playback
+const PLAY_FPS = 10
 
 function mark() {
   isDirty = true
@@ -350,6 +367,86 @@ async function outputDir($: EngineInterface): Promise<string> {
   return `${(await $.env.get('HOME')) ?? '.'}/Downloads`
 }
 
+// Opens a capture in the system's viewer, or with reveal its folder with it selected
+async function openPath($: EngineInterface, path: string, reveal = false): Promise<void> {
+  if (!(await openFile($, path, reveal))) say($, t().openFailed, false)
+}
+
+async function sizeOf($: EngineInterface, png: string): Promise<{ width: number; height: number } | undefined> {
+  return $.fs.read(png, { as: 'bytes' }).then(b => pngSize(b.base64), () => undefined)
+}
+
+// Where posters and frames go: the system's temporary folder, never the capture folder
+async function cacheDir($: EngineInterface): Promise<string> {
+  const tmp = ((await $.env.get('TMPDIR')) ?? '/tmp').replace(/\/+$/, '')
+  return `${tmp}/android-device`
+}
+
+async function ffmpeg($: EngineInterface): Promise<string | null> {
+  if (ffmpegPath === undefined) ffmpegPath = await findFfmpeg($)
+  return ffmpegPath
+}
+
+// A finished recording becomes the Video item: a poster frame where one can be made, its length and when
+async function keepVideo($: EngineInterface, local: string, seconds: number) {
+  const name = basename(local).replace(/\.mp4$/, '')
+  const poster = await videoPoster($, await ffmpeg($), local, await cacheDir($), name)
+  const size = poster ? await sizeOf($, poster) : undefined
+  const when = await $.clock.now()
+  stopVideo($)
+  await update($, lastVideo, prev => ({ path: local, poster: size ? poster : undefined, ...size, seconds, at: when, generation: (prev?.generation ?? 0) + 1 }))
+}
+
+// Plays the recording in the pane, frame by frame; without ffmpeg, in the system player
+async function playVideo($: EngineInterface, video: NonNullable<LastVideo>) {
+  if (player || preparingVideo) return stopVideo($)
+  const ff = await ffmpeg($)
+  if (!ff) {
+    say($, t().noFfmpeg, false)
+    return openPath($, video.path)
+  }
+  const dir = `${await cacheDir($)}/${basename(video.path).replace(/\.mp4$/, '')}.frames`
+  preparingVideo = video.path
+  mark()
+  try {
+    let frames = await listFrames($, dir)
+    if (frames.length === 0) {
+      if (!(await videoFrames($, ff, video.path, dir, PLAY_FPS))) return say($, t().captureFailed, false)
+      frames = await listFrames($, dir)
+    }
+    if (frames.length === 0 || preparingVideo !== video.path) return
+    const playing = { path: video.path, frames, i: 0, timer: undefined as unknown as Timer }
+    playing.timer = $.clock.every(Math.round(1000 / PLAY_FPS), () => {
+      if (player !== playing) return
+      playing.i++
+      if (playing.i >= playing.frames.length) return stopVideo($)
+      if (playing.i % PLAY_FPS === 0) mark()
+      void $.ui.blit({ requestId: PANE, key: 'video', source: { file: playing.frames[playing.i]!, format: 'png' } }).catch(() => undefined)
+    })
+    player = playing
+  } finally {
+    preparingVideo = undefined
+    mark()
+  }
+}
+
+async function listFrames($: EngineInterface, dir: string): Promise<string[]> {
+  try {
+    const entries = await $.fs.list(dir)
+    return entries.filter(x => x.kind === 'file' && /^f\d+\.png$/.test(x.name)).map(x => `${dir}/${x.name}`).sort()
+  } catch {
+    return []
+  }
+}
+
+function stopVideo(_$?: EngineInterface) {
+  preparingVideo = undefined
+  if (!player) return
+  player.timer.cancel()
+  player = undefined
+  mark()
+}
+
 async function doScreenshot($: EngineInterface): Promise<string> {
   const at = await ready($)
   if (!at) return notice ?? t().failed
@@ -360,6 +457,12 @@ async function doScreenshot($: EngineInterface): Promise<string> {
     const local = `${await outputDir($)}/${name}`
     const ok = await screenshot($, at.adb, at.s, `/sdcard/${name}`, local)
     say($, ok ? t().screenshotSaved(local) : t().captureFailed)
+    if (ok) {
+      // The PNG's own size, so a folded or an unfolded screen keeps its shape in the preview
+      const size = await sizeOf($, local)
+      const when = await $.clock.now()
+      await update($, lastShot, prev => ({ path: local, ...size, at: when, generation: (prev?.generation ?? 0) + 1 }))
+    }
     return ok ? local : t().captureFailed
   } finally {
     busy = undefined
@@ -396,6 +499,8 @@ async function doPull($: EngineInterface, named?: string): Promise<string> {
       locals.push(local)
     }
     const text = locals.length === 1 ? t().pulled(target, locals[0]!) : t().pulledSplits(target, locals.length, dir)
+    const when = await $.clock.now()
+    await update($, lastPull, () => ({ package: target, version: a ? versionText(a.versionName, a.versionCode) : undefined, paths: locals, at: when }))
     say($, text)
     return locals.length === 1 ? text : `${text}\n${locals.join('\n')}`
   } finally {
@@ -435,9 +540,11 @@ async function finishRecording($: EngineInterface, adb: string, stream: AsyncGen
   recordStream = undefined
   await $.clock.sleep(1500)
   const ok = await pull($, adb, rec.serial, rec.remote, rec.local)
+  const seconds = Math.max(0, Math.round(((await $.clock.now()) - 1500 - rec.startedAt) / 1000))
   recordingNow = null
   await update($, recording, () => null)
   say($, ok ? t().recordingSaved(rec.local) : t().captureFailed)
+  if (ok) await keepVideo($, rec.local, seconds)
 }
 
 // After a reload the child is gone but the device may still record: stop it and keep the file
@@ -450,6 +557,7 @@ async function recoverRecording($: EngineInterface) {
     await $.clock.sleep(1500)
     const ok = await pull($, adb, rec.serial, rec.remote, rec.local)
     say($, ok ? t().recordingSaved(rec.local) : t().captureFailed)
+    if (ok) await keepVideo($, rec.local, 0)
   }
   recordingNow = null
   await update($, recording, () => null)
@@ -544,6 +652,7 @@ function stopPolling() {
 // Ends the polling and forgets the on state; the pane is closed by the caller or already closing
 async function turnOff($: EngineInterface) {
   stopPolling()
+  stopVideo($)
   if (recordingNow && adbPath) await stopRecording($, adbPath, recordingNow.serial)
   await update($, isOn, () => false)
   await update($, pick, () => 'none')
@@ -860,6 +969,10 @@ export const register: Register = (on, opts) => {
     const picking = await read($, pick)
     const question = await read($, confirm)
     const rec = await read($, recording)
+    const shot = await read($, lastShot)
+    const video = await read($, lastVideo)
+    const pulled = await read($, lastPull)
+    const home = await $.env.get('HOME')
     const d = chosenDevice(chosen)
     // A question locks the other keys until it is answered
     const isLocked = question !== null || p?.failure !== undefined
@@ -1136,6 +1249,108 @@ export const register: Register = (on, opts) => {
         </Text>
       </Box>
     )
+    // What the capture buttons made, one item each: a picture at the left in a terminal that draws pictures, at
+    // the right (or under it, narrow) the path, pressed to open, a line of facts and the item's buttons
+    const canAct = !isLocked && picking === 'none'
+    const pictures = (shot?.width ? 1 : 0) + (video?.poster ? 1 : 0)
+    const room =
+      e.props.placement === 'dock' ? Math.max(8, Math.min(24, Math.floor(((e.props.scroll?.bodyRows ?? 40) - 24) / Math.max(1, pictures))))
+      : 10
+    const DETAIL = 34
+    type Item = {
+      name: string
+      id: string
+      path: string
+      onPath: () => void
+      facts: string[]
+      picture?: { file: string; generation: number; width: number; height: number; frame?: string }
+      actions: RenderChildren[]
+    }
+    const pathButton = (item: Item) => (
+      <Button key={`${item.id}-path`} plain dimColor onPress={item.onPath}>
+        {tildePath(item.path, home)}
+      </Button>
+    )
+    const itemButtons = (item: Item) => (canAct ? buttons(...item.actions, <Button key={`${item.id}-close`} onPress={() => close(item.id)}>{s.closeItem}</Button>) : null)
+    const close = (id: string) => {
+      if (id === 'video') stopVideo($)
+      if (id === 'shot') void update($, lastShot, () => null)
+      else if (id === 'video') void update($, lastVideo, () => null)
+      else void update($, lastPull, () => null)
+    }
+    const item = (it: Item) => {
+      const facts = <Text dimColor size="caption" wrap="truncate-end">{it.facts.filter(Boolean).join(' \u00b7 ')}</Text>
+      if (e.surface !== 'terminal') return block(it.name, undefined, [], pathButton(it), facts, itemButtons(it))
+      const { Image } = $.ui.resolve(e)
+      const fit = it.picture ? fitCells(it.picture.width, it.picture.height, Math.max(8, Math.min(40, columns - LABEL - (columns - LABEL >= 8 + DETAIL ? DETAIL : 0))), room) : undefined
+      const isBeside = fit !== undefined && columns - LABEL >= fit.columns + 2 + DETAIL
+      const picture = it.picture && fit && (
+        <Image
+          key={it.id}
+          source={{ file: it.picture.frame ?? it.picture.file, format: 'png', generation: it.picture.frame ? undefined : it.picture.generation }}
+          columns={fit.columns}
+          rows={fit.rows}
+          alt={basename(it.path)}
+        />
+      )
+      const detail = (
+        <Box flexDirection="column">
+          {pathButton(it)}
+          {facts}
+          {itemButtons(it)}
+        </Box>
+      )
+      return (
+        <Box>
+          <Text bold>{it.name.padEnd(LABEL)}</Text>
+          <Box flexDirection={isBeside ? 'row' : 'column'} columnGap={2}>
+            {picture}
+            {detail}
+          </Box>
+        </Box>
+      )
+    }
+    const stamp = (ms: number) => formatStamp(ms)
+    const shotItem: Item | undefined = shot ? {
+      name: s.shotLabel,
+      id: 'shot',
+      path: shot.path,
+      onPath: () => inBackground($, openPath($, shot.path)),
+      facts: [shot.width && shot.height ? `${shot.width}\u00d7${shot.height}` : '', stamp(shot.at ?? 0)],
+      picture: shot.width && shot.height ? { file: shot.path, generation: shot.generation, width: shot.width, height: shot.height } : undefined,
+      actions: [
+        <Button key="open-shot" hotkey="o" onPress={() => inBackground($, openPath($, shot.path))}>{s.open}</Button>,
+        <Button key="shot-reveal" onPress={() => inBackground($, openPath($, shot.path, true))}>{s.reveal}</Button>,
+      ],
+    } : undefined
+    const isPlaying = video !== null && player?.path === video.path
+    const isPreparing = video !== null && preparingVideo === video.path
+    const videoItem: Item | undefined = video ? {
+      name: s.videoLabel,
+      id: 'video',
+      path: video.path,
+      onPath: () => inBackground($, openPath($, video.path)),
+      facts: [
+        isPreparing ? s.preparing : isPlaying && player ? s.playing(formatClock((player.i / PLAY_FPS) * 1000)) : video.seconds > 0 ? formatClock(video.seconds * 1000) : '',
+        stamp(video.at),
+      ],
+      picture: video.poster && video.width && video.height ? { file: video.poster, generation: video.generation, width: video.width, height: video.height, frame: isPlaying ? player?.frames[player.i] : undefined } : undefined,
+      actions: [
+        <Button key="play" hotkey="k" variant={isPlaying ? undefined : 'primary'} onPress={() => inBackground($, playVideo($, video))}>{isPlaying || isPreparing ? s.stopPlay : s.play}</Button>,
+        <Button key="open-video" onPress={() => inBackground($, openPath($, video.path))}>{s.open}</Button>,
+        <Button key="video-reveal" onPress={() => inBackground($, openPath($, video.path, true))}>{s.reveal}</Button>,
+      ],
+    } : undefined
+    const pullItem: Item | undefined = pulled && pulled.paths.length > 0 ? {
+      name: s.apkLabel,
+      id: 'pull',
+      path: pulled.paths[0]!,
+      // An APK has no viewer: its folder opens with it selected
+      onPath: () => inBackground($, openPath($, pulled.paths[0]!, true)),
+      facts: [pulled.package, pulled.version ?? '', pulled.paths.length > 1 ? s.splits(pulled.paths.length - 1) : '', stamp(pulled.at)],
+      actions: [<Button key="pull-reveal" onPress={() => inBackground($, openPath($, pulled.paths[0]!, true))}>{s.reveal}</Button>],
+    } : undefined
+    const items = [shotItem, videoItem, pullItem].filter((x): x is Item => x !== undefined)
 
     return (
       <Box flexDirection="column">
@@ -1163,6 +1378,12 @@ export const register: Register = (on, opts) => {
         {done && block(s.last, undefined, lastLines)}
         {done && isTui && gap}
         {block(s.capture, undefined, [], captureRest)}
+        {items.map(it => (
+          <Box flexDirection="column">
+            {isTui && gap}
+            {item(it)}
+          </Box>
+        ))}
       </Box>
     )
   })
