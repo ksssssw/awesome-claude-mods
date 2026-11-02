@@ -91,6 +91,7 @@ claude plugin uninstall step-tracker@awesome-claude-mods
 | --- | --- | --- | --- | --- |
 | [step-tracker](mods/step-tracker) | Plan steps, what Claude is doing now, the calls it just made, a live activity graph with a walking mascot, background agents and shells, and the branch, in a framed band | Band above the prompt | 0 | 0.7.0 |
 | [android-logcat](mods/android-logcat) | The connected Android device's logcat for the repo's app, colored by level like Android Studio, with a level floor, a text filter and a `logcat_read` tool for Claude | Pane beside the transcript | 0 off, 1 tool while on | 0.1.0 |
+| [android-device](mods/android-device) | The connected Android device and the repo's app on it: pick a device, install an APK dropped on the terminal or picked from `build/` (asking before `-d`, `-t` or an uninstall), launch, stop, uninstall, screenshot, record, pull the foreground app's APK, and eight tools for Claude | Pane beside the transcript | 0 off, 8 tools while on | 0.1.0 |
 
 ## Principles
 

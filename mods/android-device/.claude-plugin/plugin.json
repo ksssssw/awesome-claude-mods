@@ -1,0 +1,63 @@
+{
+  "name": "android-device",
+  "version": "0.1.0",
+  "description": "A pane that shows the connected Android device and the repo's app on it, installs an APK dropped on the terminal or picked from the build folder (asking before any retry flag), and launches, stops, uninstalls, screenshots or records the app; /adb turns it on and off.",
+  "author": {
+    "name": "ksssssw",
+    "url": "https://github.com/ksssssw"
+  },
+  "homepage": "https://github.com/ksssssw/awesome-claude-mods/tree/main/mods/android-device",
+  "repository": "https://github.com/ksssssw/awesome-claude-mods",
+  "license": "MIT",
+  "keywords": [
+    "android",
+    "adb",
+    "apk",
+    "install",
+    "pane",
+    "terminal-ui"
+  ],
+  "userConfig": {
+    "package": {
+      "type": "string",
+      "title": "Package",
+      "description": "The app to show. Empty: the applicationId of the build.gradle in the working directory.",
+      "default": ""
+    },
+    "serial": {
+      "type": "string",
+      "title": "Device serial",
+      "description": "The device to pick when several are connected (adb devices). Empty: pick by hand in the pane.",
+      "default": ""
+    },
+    "outputDir": {
+      "type": "string",
+      "title": "Capture folder",
+      "description": "Where screenshots and recordings are saved. Empty: ~/Downloads.",
+      "default": ""
+    },
+    "grantPermissions": {
+      "type": "boolean",
+      "title": "Grant permissions on install",
+      "description": "Add -g to every install, so runtime permissions are granted at once.",
+      "default": false
+    },
+    "rows": {
+      "type": "number",
+      "title": "Rows",
+      "description": "How tall the pane is when it sits above the prompt (narrow terminals).",
+      "default": 16
+    },
+    "language": {
+      "type": "string",
+      "title": "Language",
+      "description": "The language the pane draws in: en (English) or ko (Korean).",
+      "default": "en",
+      "options": [
+        "en",
+        "ko"
+      ]
+    }
+  },
+  "types": "./types/index.d.ts"
+}
