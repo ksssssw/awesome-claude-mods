@@ -84,7 +84,7 @@ Restart Claude Code to apply it.
 - Branch information is read again only at a turn's start and end and after `Bash`, `EnterWorktree` and `ExitWorktree`.
 - The model's phase comes from the kinds of chunks it streams (thinking, text, tool). Every chunk passes through unchanged.
 - `/clear` and `/resume` empty the list.
-- The terminal comes first. The desktop app shows the list without graphs.
+- The terminal comes first. The desktop app draws the same band as a bordered box, with the graphs as SVG.
 
 ## Known limitations
 

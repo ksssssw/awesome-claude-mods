@@ -114,16 +114,47 @@ test('a long plan shows the list part of the frame, following the active step', 
   await ui.unmount()
 })
 
-test('nothing is drawn with no plan and no turn, and the desktop gets the list without a graph', async ($, on) => {
+test('nothing is drawn with no plan and no turn', async ($, on) => {
   engine(on)
   const empty = await $.ui.mount({ ...band(140), surface: 'terminal' })
   expect(await empty.find({ type: 'Text', text: /STEPS/ })).toBeUndefined()
   await empty.unmount()
+})
 
-  await $.tool.call({ tool: 'TodoWrite', todos: plan(['in_progress', 'pending']) })
-  const desktop = await $.ui.mount({ ...band(140), surface: 'desktop' })
-  expect(await desktop.find({ type: 'Text', text: /STEPS/ })).toBeDefined()
-  await desktop.unmount()
+test('the desktop draws a bordered box with no frame text, the timeline as an Svg in each step row', async ($, on) => {
+  engine(on)
+  await $.tool.call({ tool: 'TodoWrite', todos: plan(['completed', 'in_progress', 'pending']) })
+  const ui = await $.ui.mount({ ...band(140), surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: 'STEPS' })).toBeDefined()
+  expect((await ui.findAll({ type: 'Box' })).some(box => box.props.borderStyle === 'round')).toBe(true)
+  // None of the terminal's frame: no box-drawing corners, no side bars, no rules
+  expect(await ui.find({ type: 'Text', text: /[╭╮╰╯├┤│]/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /──/ })).toBeUndefined()
+  // One timeline row per step shown, with no padding rows under them
+  const rows = await ui.findAll({ type: 'Svg' })
+  expect(rows).toHaveLength(3)
+  expect(String(rows[0]?.props.source)).toMatch(/^<svg /)
+  expect(await ui.find({ type: 'Raster' })).toBeUndefined()
+  await ui.unmount()
+
+  // Narrow, no graph, as in the terminal
+  const narrow = await $.ui.mount({ ...band(60), surface: 'desktop' })
+  expect(await narrow.find({ type: 'Svg' })).toBeUndefined()
+  await narrow.unmount()
+})
+
+test('the desktop draws the activity graph and the mascot as one Svg, and no blank rows', async ($, on) => {
+  engine(on)
+  on('ui.toast', () => ({ value: undefined }))
+  await $.command.run({ command: 'steps' } as never)
+  await $.tool.call({ tool: 'Read', file_path: '/r/a.ts' } as never)
+  const ui = await $.ui.mount({ ...band(100), surface: 'desktop' })
+  const graph = await ui.find({ type: 'Svg' })
+  // The mascot's orange is in the drawing
+  expect(String(graph?.props.source)).toContain('#d97757')
+  expect(await ui.find({ type: 'Text', text: 'Read a.ts' })).toBeDefined()
+  expect(await ui.findAll({ type: 'Text', text: /^ $/ })).toHaveLength(0)
+  await ui.unmount()
 })
 
 test('background agents keep the band up after the turn, each with what it does', async ($, on) => {
