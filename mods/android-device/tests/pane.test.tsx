@@ -397,8 +397,20 @@ test('p previews the screenshot with its path; the path and o open it, Folder re
 
   // Elsewhere than the terminal the item is its path and buttons, no picture
   const gui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  expect(await gui.find({ type: 'Button', key: 'shot-path' })).toBeDefined()
+  // There the path is text in its card, opened by Open and Folder; no Button carries a hotkey, Close is dim
+  expect(await gui.find({ type: 'Button', key: 'shot-path' })).toBeUndefined()
+  expect(await gui.find({ type: 'Text', text: /^~\/Downloads\/Pixel_8_\d{8}-\d{6}\.png$/ })).toBeDefined()
   expect(await gui.find({ type: 'Image' })).toBeUndefined()
+  for (const button of await gui.findAll({ type: 'Button' })) expect(button.props.hotkey).toBeUndefined()
+  expect((await gui.find({ type: 'Button', key: 'shot-close' }))?.props.dimColor).toBe(true)
+  expect((await gui.find({ type: 'Button', key: 'screenshot' }))?.props.variant).toBe('primary')
+  expect((await gui.findAll({ type: 'Box' })).some(box => box.props.borderStyle === 'round')).toBe(true)
+  // The pane's title bar names it: no second title, the notice and Refresh in the first row
+  expect(await gui.find({ type: 'Text', text: /^adb$/ })).toBeUndefined()
+  expect(await gui.find({ type: 'Button', key: 'refresh' })).toBeDefined()
+  // The terminal keeps its hotkeys
+  expect((await ui.find({ type: 'Button', key: 'shot-close' }))?.props.hotkey).toBeUndefined()
+  expect((await ui.find({ type: 'Button', key: 'open-shot' }))?.props.hotkey).toBe('o')
 
   await ui.press({ key: 'shot-close' })
   await settle(adb)

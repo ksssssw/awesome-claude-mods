@@ -451,13 +451,17 @@ export const register: Register = (on, opts) => {
     const Input = 'Input' in table ? table.Input : undefined
     const Select = 'Select' in table ? table.Select : undefined
     const Client = 'Client' in table ? table.Client : undefined
+    // The terminal shows each Button's hotkey; a pointer surface draws the Buttons alone, the scrolling ones dim
+    const isTui = e.surface === 'terminal'
+    const hk = (key: string) => (isTui ? key : undefined)
 
     const min = asLevel(await read($, level), 'D')
     const text = await read($, filter)
     const paused = await read($, isPaused)
     const shown = tail(viewed(), min, text, SCROLLBACK)
-    // Header, controls and filter take three rows; the lines get the rest
-    const room = Math.max(1, (e.props.scroll?.bodyRows ?? options.rows) - 3)
+    // Header, controls and filter take three rows in the terminal; a pointer surface's native select, buttons and
+    // field stand taller than a line of text, so there they take about five
+    const room = Math.max(1, (e.props.scroll?.bodyRows ?? options.rows) - (isTui ? 3 : 5))
     lastRoom = room
     const offset = Math.min(await read($, scroll), Math.max(0, shown.length - room))
     const scrollTo = (kind: Scroll) => void scrollBy($, kind)
@@ -481,10 +485,27 @@ export const register: Register = (on, opts) => {
 
     return (
       <Box flexDirection="column">
-        <Text wrap="truncate-end">
-          <Text bold>{t().paneTitle}</Text> <Text>{pkg}</Text> <Text dimColor>{extra}</Text> <Text color={state.color}>{state.text}</Text>
-        </Text>
-        <Box gap={1}>
+        {isTui ? (
+          <Text wrap="truncate-end">
+            <Text weight="bold">{t().paneTitle}</Text> <Text>{pkg}</Text> <Text dimColor>{extra}</Text> <Text color={state.color}>{state.text}</Text>
+          </Text>
+        ) : (
+          // The pane's title bar names it: the package and device at the left, the state at the right
+          <Box justifyContent="space-between" columnGap={1}>
+            <Box flexShrink={1} overflow="hidden">
+              <Text wrap="truncate-end">
+                <Text weight="semibold">{pkg}</Text>{' '}
+                <Text size="caption" dimColor>
+                  {extra}
+                </Text>
+              </Text>
+            </Box>
+            <Text size="caption" color={state.color}>
+              {state.text}
+            </Text>
+          </Box>
+        )}
+        <Box gap={1} alignItems="center" flexWrap="wrap">
           {Select && (
             <Select
               key="level"
@@ -494,19 +515,19 @@ export const register: Register = (on, opts) => {
               onSelect={value => void update($, level, () => asLevel(value, 'D'))}
             />
           )}
-          <Button key="pause" hotkey="p" onPress={() => void togglePause()}>
+          <Button key="pause" hotkey={hk('p')} variant={isTui ? undefined : 'primary'} onPress={() => void togglePause()}>
             {paused ? t().resume : t().pause}
           </Button>
-          <Button key="clear" hotkey="c" onPress={clearAll}>
+          <Button key="clear" hotkey={hk('c')} dimColor={!isTui} onPress={clearAll}>
             {t().clear}
           </Button>
-          <Button key="older" hotkey="u" onPress={() => scrollTo('pageup')}>
+          <Button key="older" hotkey={hk('u')} dimColor={!isTui} onPress={() => scrollTo('pageup')}>
             {t().older}
           </Button>
-          <Button key="newer" hotkey="d" onPress={() => scrollTo('pagedown')}>
+          <Button key="newer" hotkey={hk('d')} dimColor={!isTui} onPress={() => scrollTo('pagedown')}>
             {t().newer}
           </Button>
-          <Button key="follow" hotkey="f" onPress={() => scrollTo('newest')}>
+          <Button key="follow" hotkey={hk('f')} dimColor={!isTui} onPress={() => scrollTo('newest')}>
             {t().follow}
           </Button>
         </Box>
@@ -523,11 +544,11 @@ export const register: Register = (on, opts) => {
           </Box>
         )}
         {Client ? (
-          <Client key="lines" module="./lines.tsx" height={room} props={linesProps(shown, offset, room, arrivedSinceHeld)} />
+          <Client key="lines" module="./lines.tsx" height={room} props={linesProps(shown, offset, room, arrivedSinceHeld, isTui)} />
         ) : (
           <Box flexDirection="column">
             {shown.length === 0 && <Text dimColor>{t().empty}</Text>}
-            {shown.slice(Math.max(0, shown.length - room - offset), shown.length - offset).map(entry => line(entry, Text))}
+            {shown.slice(Math.max(0, shown.length - room - offset), shown.length - offset).map(entry => line(entry, Text, isTui))}
           </Box>
         )}
       </Box>
@@ -535,6 +556,6 @@ export const register: Register = (on, opts) => {
   })
 }
 
-function linesProps(lines: Entry[], offset: number, rows: number, newerCount: number): LinesProps {
-  return { lines, offset, rows, newerCount, empty: t().empty, newer: t().newerLines }
+function linesProps(lines: Entry[], offset: number, rows: number, newerCount: number, isTui: boolean): LinesProps {
+  return { lines, offset, rows, newerCount, empty: t().empty, newer: t().newerLines, isTui }
 }

@@ -78,6 +78,7 @@ echo '{"language":"ko"}' | claude plugin configure android-logcat@awesome-claude
 - 스크롤은 최근 300줄까지입니다. 그보다 오래된 줄은 `logcat_read`로만 볼 수 있습니다(`bufferLines`까지).
 - 한 번에 단말 하나. 여러 개가 연결되고 `serial`이 비어 있으면 첫 단말을 씁니다.
 - `--uid` 필터는 Android 8 이상에서 동작합니다. 그 아래는 pid로 대체합니다.
+- 데스크탑 앱에서는 로그 줄을 고정폭 글꼴로 그리고 레벨을 색 배지로 보여 주며, 버튼에 단축키 배지를 붙이지 않습니다.
 - 모바일 앱은 입력 필드를 그리지 않아 레벨과 필터가 고정됩니다.
 
 ## 개발

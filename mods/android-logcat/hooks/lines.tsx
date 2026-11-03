@@ -15,6 +15,8 @@ export type LinesProps = {
   newerCount: number
   empty: string
   newer: string
+  // Whether the pane is drawn in the terminal: elsewhere the level is a badge
+  isTui: boolean
 }
 
 type State = { hasKeys: true }
@@ -47,7 +49,7 @@ const Lines: ClientModule<LinesProps, State> = (props, surface) => {
   return (
     <Box flexDirection="column">
       {total === 0 && <Text dimColor>{props.empty}</Text>}
-      {shown.slice(0, hasNewer ? rows - 1 : rows).map(entry => line(entry, Text))}
+      {shown.slice(0, hasNewer ? rows - 1 : rows).map(entry => line(entry, Text, props.isTui))}
       {hasNewer && <Text dimColor>{props.newer.replace('{n}', String(offset + props.newerCount))}</Text>}
     </Box>
   )

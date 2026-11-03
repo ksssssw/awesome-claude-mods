@@ -36,7 +36,7 @@ Shot     ▓▓▓▓▓▓▓▓  ~/Downloads/Pixel_7_20261102-142011.png
          ▓▓▓▓▓▓▓▓  (o) Open  Folder  Close
 ```
 
-The desktop app, the editor and the phone draw the same blocks as cards: a small caption heads each (`DEVICE`, `APP`, `INSTALL`), the first line is bold, the gauges are colored strips, and the buttons are buttons. Where the surface seats the pane (docked beside a fullscreen transcript, or inline above the prompt in a narrower terminal) is the surface's choice.
+The desktop app, the editor and the phone draw the same blocks as cards: a small caption heads each (`DEVICE`, `APP`, `INSTALL`), the first line is bold, the gauges are colored strips, and the buttons are buttons, with no hotkey badges and one main action per row. Where the surface seats the pane (docked beside a fullscreen transcript, or inline above the prompt in a narrower terminal) is the surface's choice.
 
 - **Device**: the chosen device (model, maker, USB or Wi-Fi, adb state), its serial, Android version and API level, whether the screen is on, then two gauges: battery (green, amber under 50%, red under 20%) and `/data` used, with the free space beside it. With several devices connected nothing is chosen until you press `d` and a digit; with one, it is chosen for you. A device that drops out is unchosen and the line says so.
 - **App**: the repo's package as installed on the device: version name and code, when it was last updated, who installed it, whether it is disabled, whether it runs. `not installed` when it is not there.

@@ -979,6 +979,10 @@ export const register: Register = (on, opts) => {
     const LABEL = 9
     const pad = ''.padEnd(LABEL)
     const BAR = isNarrow ? 8 : 12
+    // The terminal shows each Button's hotkey; a pointer surface draws the Button alone, so no key badges
+    const hk = (key: string) => (isTui ? key : undefined)
+    // A secondary action: dim on a pointer surface, beside the one main action of its row
+    const minor = !isTui
 
     if (!isPaneOn) {
       return (
@@ -1010,7 +1014,7 @@ export const register: Register = (on, opts) => {
         return (
           <Box flexDirection="column">
             <Box columnGap={1}>
-              <Text bold>{name.padEnd(LABEL - 1)}</Text>
+              <Text weight="bold">{name.padEnd(LABEL - 1)}</Text>
               {first}
             </Box>
             {others.map(node => (node ? indent(node) : null))}
@@ -1024,7 +1028,7 @@ export const register: Register = (on, opts) => {
             {shown.map((line, i) => (
               <Box justifyContent="space-between">
                 <Text wrap="truncate-end">
-                  {i === 0 ? <Text bold>{name.padEnd(LABEL)}</Text> : pad}
+                  {i === 0 ? <Text weight="bold">{name.padEnd(LABEL)}</Text> : pad}
                   <Text color={line.color} dimColor={line.isDim}>
                     {line.text}
                   </Text>
@@ -1037,7 +1041,7 @@ export const register: Register = (on, opts) => {
         )
       }
       return (
-        <Box flexDirection="column" marginTop={1}>
+        <Box flexDirection="column" marginTop="sm" borderStyle="round" borderColor="subtle" paddingX={1} rowGap="xs">
           <Box justifyContent="space-between">
             <Text size="caption" weight="semibold" dimColor>
               {name.toUpperCase()}
@@ -1048,12 +1052,12 @@ export const register: Register = (on, opts) => {
               </Text>
             )}
           </Box>
-          {shown.map((line, i) => (
+          {lines.map((line, i) => (
             <Text size={i === 0 ? 'body' : 'caption'} weight={i === 0 ? 'semibold' : 'regular'} color={line.color} dimColor={line.isDim} wrap="truncate-end">
               {line.text}
             </Text>
           ))}
-          {rest.map(node => (node ? <Box gap={1}>{node}</Box> : null))}
+          {rest.map(node => (node ? <Box gap={1} alignItems="center">{node}</Box> : null))}
         </Box>
       )
     }
@@ -1087,10 +1091,10 @@ export const register: Register = (on, opts) => {
     const ask = (text: string) => (
       <Box columnGap={1} flexWrap="wrap">
         <Text color="warning">{text}</Text>
-        <Button key="yes" hotkey="y" variant="primary" onPress={() => inBackground($, answerYes($))}>
+        <Button key="yes" hotkey={hk("y")} variant="primary" onPress={() => inBackground($, answerYes($))}>
           {s.yes}
         </Button>
-        <Button key="no" hotkey="n" role="dismiss" onPress={() => inBackground($, answerNo($))}>
+        <Button key="no" hotkey={hk("n")} role="dismiss" onPress={() => inBackground($, answerNo($))}>
           {s.no}
         </Button>
       </Box>
@@ -1100,7 +1104,7 @@ export const register: Register = (on, opts) => {
       <Box flexDirection="column">
         {items.slice(0, LIST_MAX).map((item, i) => (
           <Box gap={1}>
-            <Button key={item.keyName} hotkey={String(i + 1)} onPress={item.onPress}>
+            <Button key={item.keyName} hotkey={hk(String(i + 1))} onPress={item.onPress}>
               {item.label}
             </Button>
             <Text dimColor size="caption">
@@ -1109,7 +1113,7 @@ export const register: Register = (on, opts) => {
           </Box>
         ))}
         <Box>
-          <Button key="cancel-pick" hotkey="x" role="dismiss" onPress={cancelPick}>
+          <Button key="cancel-pick" hotkey={hk("x")} role="dismiss" onPress={cancelPick}>
             {s.cancel}
           </Button>
         </Box>
@@ -1149,7 +1153,7 @@ export const register: Register = (on, opts) => {
         )
       : devices.length > 1 ?
         buttons(
-          <Button key="switch" hotkey="d" onPress={() => void update($, pick, () => 'device')}>
+          <Button key="switch" hotkey={hk("d")} dimColor={minor} onPress={() => void update($, pick, () => 'device')}>
             {s.switchDevice}
           </Button>,
         )
@@ -1165,16 +1169,16 @@ export const register: Register = (on, opts) => {
       question ? ask(question.kind === 'uninstall' ? s.askUninstall(pkg ?? '') : s.askClear(pkg ?? ''))
       : app && !isLocked && picking === 'none' ?
         buttons(
-          <Button key="launch" hotkey="l" onPress={() => inBackground($, doLaunch($))}>
+          <Button key="launch" hotkey={hk("l")} variant={isTui ? undefined : 'primary'} onPress={() => inBackground($, doLaunch($))}>
             {s.launch}
           </Button>,
-          <Button key="stop" hotkey="s" onPress={() => inBackground($, doStop($))}>
+          <Button key="stop" hotkey={hk("s")} dimColor={minor} onPress={() => inBackground($, doStop($))}>
             {s.stop}
           </Button>,
-          <Button key="uninstall" hotkey="u" onPress={() => void update($, confirm, () => ({ kind: 'uninstall' }))}>
+          <Button key="uninstall" hotkey={hk("u")} dimColor={minor} onPress={() => void update($, confirm, () => ({ kind: 'uninstall' }))}>
             {s.uninstall}
           </Button>,
-          <Button key="clear" hotkey="c" onPress={() => void update($, confirm, () => ({ kind: 'clear' }))}>
+          <Button key="clear" hotkey={hk("c")} dimColor={minor} onPress={() => void update($, confirm, () => ({ kind: 'clear' }))}>
             {s.clearData}
           </Button>,
         )
@@ -1205,17 +1209,17 @@ export const register: Register = (on, opts) => {
       : !isLocked && picking === 'none' && busy !== 'install' ?
         buttons(
           p && (
-            <Button key="install" hotkey="i" variant="primary" onPress={() => inBackground($, runInstall($, p))}>
+            <Button key="install" hotkey={hk("i")} variant="primary" onPress={() => inBackground($, runInstall($, p))}>
               {s.installButton}
             </Button>
           ),
           repo.isAndroid && (
-            <Button key="pick-apk" hotkey="a" onPress={() => inBackground($, refreshRepo($).then(() => update($, pick, () => 'apk')))}>
+            <Button key="pick-apk" hotkey={hk("a")} onPress={() => inBackground($, refreshRepo($).then(() => update($, pick, () => 'apk')))}>
               {s.pickApk}
             </Button>
           ),
           p && (
-            <Button key="cancel-install" hotkey="x" role="dismiss" onPress={() => void update($, pending, () => null)}>
+            <Button key="cancel-install" hotkey={hk("x")} role="dismiss" onPress={() => void update($, pending, () => null)}>
               {s.cancel}
             </Button>
           ),
@@ -1227,19 +1231,19 @@ export const register: Register = (on, opts) => {
     // The last install in three lines: the file, the package it put on the device, the version with when and how long
     const lastLines: Line[] = done ? [{ text: done.file }, { text: done.package }, { text: [versionText(done.versionName, done.versionCode), formatStamp(done.at), formatDuration(done.ms)].join(' \u00b7 '), isDim: true }] : []
     const captureRest = (
-      <Box columnGap={1} flexWrap="wrap">
+      <Box columnGap={1} flexWrap="wrap" alignItems="center">
         {!isLocked && picking === 'none' && (
-          <Button key="screenshot" hotkey="p" onPress={() => inBackground($, doScreenshot($))}>
+          <Button key="screenshot" hotkey={hk("p")} variant={isTui ? undefined : 'primary'} onPress={() => inBackground($, doScreenshot($))}>
             {s.screenshot}
           </Button>
         )}
         {!isLocked && picking === 'none' && (
-          <Button key="record" hotkey="v" onPress={() => inBackground($, toggleRecording($))}>
+          <Button key="record" hotkey={hk("v")} onPress={() => inBackground($, toggleRecording($))}>
             {rec ? s.stopRecord : s.record}
           </Button>
         )}
         {!isLocked && picking === 'none' && (
-          <Button key="pull" hotkey="e" onPress={() => inBackground($, doPull($))}>
+          <Button key="pull" hotkey={hk("e")} dimColor={minor} onPress={() => inBackground($, doPull($))}>
             {s.pullApk}
           </Button>
         )}
@@ -1266,12 +1270,17 @@ export const register: Register = (on, opts) => {
       picture?: { file: string; generation: number; width: number; height: number; frame?: string }
       actions: RenderChildren[]
     }
-    const pathButton = (item: Item) => (
-      <Button key={`${item.id}-path`} plain dimColor onPress={item.onPath}>
-        {tildePath(item.path, home)}
-      </Button>
-    )
-    const itemButtons = (item: Item) => (canAct ? buttons(...item.actions, <Button key={`${item.id}-close`} onPress={() => close(item.id)}>{s.closeItem}</Button>) : null)
+    const pathButton = (item: Item) =>
+      isTui ? (
+        <Button key={`${item.id}-path`} plain dimColor onPress={item.onPath}>
+          {tildePath(item.path, home)}
+        </Button>
+      ) : (
+        <Text size="caption" wrap="truncate-end">
+          {tildePath(item.path, home)}
+        </Text>
+      )
+    const itemButtons = (item: Item) => (canAct ? buttons(...item.actions, <Button key={`${item.id}-close`} dimColor={minor} onPress={() => close(item.id)}>{s.closeItem}</Button>) : null)
     const close = (id: string) => {
       if (id === 'video') stopVideo($)
       if (id === 'shot') void update($, lastShot, () => null)
@@ -1302,7 +1311,7 @@ export const register: Register = (on, opts) => {
       )
       return (
         <Box>
-          <Text bold>{it.name.padEnd(LABEL)}</Text>
+          <Text weight="bold">{it.name.padEnd(LABEL)}</Text>
           <Box flexDirection={isBeside ? 'row' : 'column'} columnGap={2}>
             {picture}
             {detail}
@@ -1319,8 +1328,8 @@ export const register: Register = (on, opts) => {
       facts: [shot.width && shot.height ? `${shot.width}\u00d7${shot.height}` : '', stamp(shot.at ?? 0)],
       picture: shot.width && shot.height ? { file: shot.path, generation: shot.generation, width: shot.width, height: shot.height } : undefined,
       actions: [
-        <Button key="open-shot" hotkey="o" onPress={() => inBackground($, openPath($, shot.path))}>{s.open}</Button>,
-        <Button key="shot-reveal" onPress={() => inBackground($, openPath($, shot.path, true))}>{s.reveal}</Button>,
+        <Button key="open-shot" hotkey={hk("o")} onPress={() => inBackground($, openPath($, shot.path))}>{s.open}</Button>,
+        <Button key="shot-reveal" dimColor={minor} onPress={() => inBackground($, openPath($, shot.path, true))}>{s.reveal}</Button>,
       ],
     } : undefined
     const isPlaying = video !== null && player?.path === video.path
@@ -1336,9 +1345,9 @@ export const register: Register = (on, opts) => {
       ],
       picture: video.poster && video.width && video.height ? { file: video.poster, generation: video.generation, width: video.width, height: video.height, frame: isPlaying ? player?.frames[player.i] : undefined } : undefined,
       actions: [
-        <Button key="play" hotkey="k" variant={isPlaying ? undefined : 'primary'} onPress={() => inBackground($, playVideo($, video))}>{isPlaying || isPreparing ? s.stopPlay : s.play}</Button>,
-        <Button key="open-video" onPress={() => inBackground($, openPath($, video.path))}>{s.open}</Button>,
-        <Button key="video-reveal" onPress={() => inBackground($, openPath($, video.path, true))}>{s.reveal}</Button>,
+        <Button key="play" hotkey={hk("k")} variant={isPlaying ? undefined : 'primary'} onPress={() => inBackground($, playVideo($, video))}>{isPlaying || isPreparing ? s.stopPlay : s.play}</Button>,
+        <Button key="open-video" dimColor={minor} onPress={() => inBackground($, openPath($, video.path))}>{s.open}</Button>,
+        <Button key="video-reveal" dimColor={minor} onPress={() => inBackground($, openPath($, video.path, true))}>{s.reveal}</Button>,
       ],
     } : undefined
     const pullItem: Item | undefined = pulled && pulled.paths.length > 0 ? {
@@ -1352,11 +1361,27 @@ export const register: Register = (on, opts) => {
     } : undefined
     const items = [shotItem, videoItem, pullItem].filter((x): x is Item => x !== undefined)
 
+    // The pane's own title bar names it on a pointer surface: the first row is the last notice, one line, and Refresh
+    const header = isTui ? null : (
+      <Box justifyContent="space-between" alignItems="center" columnGap={1}>
+        <Box flexShrink={1} overflow="hidden">
+          <Text color={noticeColor} dimColor={noticeColor === undefined} size="caption" wrap="truncate-end">
+            {notice ? notice.replace(home ? home.replace(/\/+$/, '') : '\u0000', '~') : ''}
+          </Text>
+        </Box>
+        {!isLocked && (
+          <Button key="refresh" dimColor onPress={() => inBackground($, refreshAll($))}>
+            {s.refresh}
+          </Button>
+        )}
+      </Box>
+    )
+
     return (
       <Box flexDirection="column">
-        <Box justifyContent="space-between">
+        {header ?? <Box justifyContent="space-between">
           <Text wrap="truncate-end">
-            <Text bold size="heading">
+            <Text weight="bold" size="heading">
               {s.title}
             </Text>{' '}
             <Text color={noticeColor} size="caption">
@@ -1364,11 +1389,11 @@ export const register: Register = (on, opts) => {
             </Text>
           </Text>
           {!isLocked && (
-            <Button key="refresh" hotkey="r" onPress={() => inBackground($, refreshAll($))}>
+            <Button key="refresh" hotkey={hk("r")} onPress={() => inBackground($, refreshAll($))}>
               {s.refresh}
             </Button>
           )}
-        </Box>
+        </Box>}
         {block(s.device, devices.length > 0 ? s.connected(devices.length) : undefined, deviceLines, gauges, deviceRest)}
         {isTui && gap}
         {block(s.app, appRight, appLines, appRest)}

@@ -1,6 +1,6 @@
 {
   "name": "android-device",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A pane that shows the connected Android device and the repo's app on it, installs an APK dropped on the terminal or picked from the build folder (asking before any retry flag), and launches, stops, uninstalls, screenshots or records the app; /adb turns it on and off.",
   "author": {
     "name": "ksssssw",
