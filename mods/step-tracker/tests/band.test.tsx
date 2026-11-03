@@ -126,7 +126,7 @@ test('the desktop draws a bordered box with no frame text, the timeline as an Sv
   await $.tool.call({ tool: 'TodoWrite', todos: plan(['completed', 'in_progress', 'pending']) })
   const ui = await $.ui.mount({ ...band(140), surface: 'desktop' })
   expect(await ui.find({ type: 'Text', text: 'STEPS' })).toBeDefined()
-  expect(await ui.find({ type: 'Box', props: { borderStyle: 'round' } })).toBeDefined()
+  expect((await ui.findAll({ type: 'Box' })).some(box => box.props.borderStyle === 'round')).toBe(true)
   // None of the terminal's frame: no box-drawing corners, no side bars, no rules
   expect(await ui.find({ type: 'Text', text: /[╭╮╰╯├┤│]/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /──/ })).toBeUndefined()
