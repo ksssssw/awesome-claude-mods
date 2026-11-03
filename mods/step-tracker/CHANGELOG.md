@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.1
+
+- The desktop app draws the band as a rounded bordered box, with the header in its first row, instead of box-drawing text that broke in a proportional font. The band takes only the rows it holds there.
+- The desktop app now shows the activity graph with the mascot and the step timeline, drawn as SVG from the same cells the terminal draws.
+
 ## 0.7.0
 
 - The band draws in English by default. A new `language` option (`en`, `ko`) switches every phrase to Korean.

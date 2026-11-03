@@ -2,7 +2,7 @@
 import { mix } from './model'
 import type { CallEntry, CallKind, Row } from './model'
 
-const DEFAULT_COLOR = 0x01000000
+export const DEFAULT_COLOR = 0x01000000
 const SPACE = 0x20
 const FULL = 0x2588
 const DOT = 0x00b7
@@ -50,11 +50,19 @@ function rowCells(row: Row, columns: number, span: Span, now: number, frame: num
   return cells
 }
 
+// The timeline as a grid of [codePoint, foreground] cells, one row per list row
+export function timelineGrid(rows: readonly Row[], columns: number, span: Span, now: number, frame: number): Grid {
+  return rows.map(row => rowCells(row, columns, span, now, frame))
+}
+
 // Packs the rows into a Raster's `cells`: base64 of [codePoint, foreground, background] u32 triplets
 export function timelineCells(rows: readonly Row[], columns: number, span: Span, now: number, frame: number): string {
-  const words = rows.flatMap(row =>
-    rowCells(row, columns, span, now, frame).flatMap(([code, color]) => [code, color, DEFAULT_COLOR]),
-  )
+  return gridCells(timelineGrid(rows, columns, span, now, frame))
+}
+
+// A grid as a Raster's `cells`
+export function gridCells(grid: Grid): string {
+  const words = grid.flatMap(row => row.flatMap(([code, color]) => [code, color, DEFAULT_COLOR]))
   return toBase64(new Uint8Array(Uint32Array.from(words).buffer))
 }
 
@@ -83,7 +91,8 @@ export const MASCOT_ROWS = 4
 
 export type Mood = 'idle' | 'working' | 'thinking'
 
-type Grid = [number, number][][]
+// Rows of [codePoint, foreground] cells: what a Raster draws in the terminal and an Svg elsewhere
+export type Grid = [number, number][][]
 
 function blankGrid(columns: number, rows: number): Grid {
   return Array.from({ length: rows }, () => Array.from({ length: columns }, () => [SPACE, DEFAULT_COLOR] as [number, number]))
@@ -141,6 +150,17 @@ export function activityCells(
   frame: number,
   mood: Mood,
 ): string {
+  return gridCells(activityGrid(log, columns, rows, now, frame, mood))
+}
+
+export function activityGrid(
+  log: readonly CallEntry[],
+  columns: number,
+  rows: number,
+  now: number,
+  frame: number,
+  mood: Mood,
+): Grid {
   const grid = blankGrid(columns, rows)
   const mascotRows = rows >= MASCOT_ROWS + 1 ? MASCOT_ROWS : 0
   const chartRows = rows - mascotRows
@@ -166,8 +186,7 @@ export function activityCells(
     })
   }
   if (mascotRows > 0) drawMascot(grid, chartRows, columns, frame, mood)
-  const words = grid.flatMap(row => row.flatMap(([code, color]) => [code, color, DEFAULT_COLOR]))
-  return toBase64(new Uint8Array(Uint32Array.from(words).buffer))
+  return grid
 }
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'

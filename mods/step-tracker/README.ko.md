@@ -88,7 +88,7 @@ echo '{"language":"ko"}' | claude plugin configure step-tracker@awesome-claude-m
 - 브랜치 정보는 턴 시작과 끝, `Bash`·`EnterWorktree`·`ExitWorktree` 직후에만 다시 읽습니다.
 - 모델의 현재 상태는 응답 스트림의 청크 종류(thinking, text, tool)로 판단합니다. 청크는 바꾸지 않고 그대로 넘깁니다.
 - `/clear`와 `/resume` 때 목록이 비워집니다.
-- 터미널이 주 대상입니다. Desktop 앱에서는 그래프 없이 목록만 보여 줍니다.
+- 터미널이 주 대상입니다. Desktop 앱에서는 같은 밴드를 테두리 박스로 그리고, 그래프는 SVG로 보여 줍니다.
 
 ## 알려진 제약
 
