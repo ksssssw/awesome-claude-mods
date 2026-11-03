@@ -105,6 +105,33 @@ test('the pane is empty until /logcat, then shows the device, the package and co
   await $.command.run({ command: 'logcat', args: 'off', ...COMMAND } as never)
 })
 
+test('the desktop draws the lines monospaced with a level badge, and the buttons without hotkeys', async ($, on) => {
+  const adb = engine(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await turnOn($, adb)
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /com\.example\.app\.debug/ })).toBeDefined()
+  // The pane's title bar names it: no second logcat title
+  expect(await ui.find({ type: 'Text', text: /^logcat$/ })).toBeUndefined()
+  // The level a badge on its color, the tag and the message apart; every line in the monospaced face
+  const badge = await ui.find({ type: 'Text', text: /^ E $/, in: 'lines' })
+  expect(badge?.props.backgroundColor).toBe('#FF6B68')
+  expect(await ui.find({ type: 'Text', text: /E\/Crash:/, in: 'lines' })).toBeUndefined()
+  expect((await ui.find({ type: 'Text', text: /^java\.lang\.IllegalStateException$/, in: 'lines' }))?.props.color).toBe('#FF6B68')
+  for (const button of await ui.findAll({ type: 'Button' })) expect(button.props.hotkey).toBeUndefined()
+  expect((await ui.find({ type: 'Button', key: 'pause' }))?.props.variant).toBe('primary')
+  expect((await ui.find({ type: 'Button', key: 'follow' }))?.props.dimColor).toBe(true)
+  await ui.unmount()
+
+  // The terminal keeps its hotkeys and its level/tag heads
+  const tui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await tui.find({ type: 'Button', key: 'pause' }))?.props.hotkey).toBe('p')
+  expect(await tui.find({ type: 'Text', text: /E\/Crash:/, in: 'lines' })).toBeDefined()
+  await tui.unmount()
+  await $.command.run({ command: 'logcat', args: 'off', ...COMMAND } as never)
+})
+
 test('the level picker and the text filter narrow what is shown', async ($, on) => {
   const adb = engine(on)
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })

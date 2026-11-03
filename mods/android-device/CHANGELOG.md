@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1
+
+- The desktop app, the editor and the phone draw each block as a rounded card, the buttons without hotkey badges, one main action per row (Launch, Screenshot, Install, Play) and the rest dimmed. The first row is the last notice on one line, with the home folder as `~`, beside Refresh; the pane's own title bar names it, so no second title. An item's path is text there, opened by Open and Folder. The terminal is unchanged.
+
 ## 0.2.0
 
 - What Capture makes stays under it as items: Shot (the last screenshot), Video (the last recording) and APK (the last pull). Each shows its path, with the home folder as `~`; pressing the path opens the file in the system viewer (`open`, else `xdg-open`), the APK's in its folder. Each has a line of facts (size, length, package and version, splits, time) and its buttons: Open, Folder (shows the file in its folder) and Close (drops the item, the file stays).

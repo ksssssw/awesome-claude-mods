@@ -78,6 +78,7 @@ Restart Claude Code to apply them.
 - Scrolling back reaches the last 300 matching lines; older ones are only in `logcat_read` (up to `bufferLines`).
 - One device at a time. With several connected and no `serial`, the first one wins.
 - `--uid` filtering needs Android 8 or newer; older devices fall back to the pid.
+- The desktop app draws the lines in a monospaced face with the level as a colored badge, and the buttons without hotkey badges.
 - The mobile app draws no input fields, so the level and the filter are fixed there.
 
 ## Development
