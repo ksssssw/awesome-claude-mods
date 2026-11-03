@@ -8,6 +8,17 @@ import {
   newestVersion,
   parseBadging,
   parseBattery,
+  parseBatteryDetail,
+  parseGles,
+  parseGrep,
+  parseProps,
+  parseRefreshRate,
+  parseWmSize,
+  propSpecs,
+  skinOf,
+  SKIN_PROPS,
+  SYSFS_FILES,
+  sysfsSpecs,
   parseDevices,
   parseDf,
   foregroundPackage,
@@ -18,7 +29,7 @@ import {
   pickPackage,
   sortApks,
 } from './model'
-import type { Apk, AppInfo, Badging, Device, DeviceInfo } from './model'
+import type { Apk, AppInfo, Badging, Device, DeviceInfo, Skin, Specs } from './model'
 
 const RUN_TIMEOUT = 10_000
 // An install copies the APK over USB first: a large one takes a while
@@ -102,6 +113,38 @@ export async function deviceInfo($: EngineInterface, adb: string, serial: string
   const df = await runs($, shell(adb, serial, 'df', '/data'))
   if (df !== undefined) info.storage = parseDf(df)
   return info
+}
+
+// The vendor skin (One UI) and its version; undefined on a device without one. Read once per device.
+export async function deviceSkin($: EngineInterface, adb: string, serial: string): Promise<Skin | undefined> {
+  const props: Record<string, string | undefined> = {}
+  for (const name of SKIN_PROPS) props[name] = (await runs($, shell(adb, serial, 'getprop', name)))?.trim() || undefined
+  return skinOf(props)
+}
+
+// stdout even when the command also failed in part (grep over files some of which a device lacks)
+async function anyOut($: EngineInterface, argv: string[]): Promise<string> {
+  return (await run($, argv))?.stdout ?? ''
+}
+
+// The device's hardware: six reads, side by side; whatever a device does not report stays out
+export async function deviceSpecs($: EngineInterface, adb: string, serial: string): Promise<Specs> {
+  const [props, sysfs, battery, surfaceFlinger, display, wmSize] = await Promise.all([
+    anyOut($, shell(adb, serial, 'getprop')),
+    anyOut($, shell(adb, serial, 'grep', '-H', '.', ...SYSFS_FILES)),
+    anyOut($, shell(adb, serial, 'dumpsys', 'battery')),
+    anyOut($, shell(adb, serial, 'dumpsys', 'SurfaceFlinger')),
+    anyOut($, shell(adb, serial, 'dumpsys', 'display')),
+    anyOut($, shell(adb, serial, 'wm', 'size')),
+  ])
+  return {
+    ...propSpecs(parseProps(props)),
+    ...sysfsSpecs(parseGrep(sysfs)),
+    ...parseBatteryDetail(battery),
+    ...parseGles(surfaceFlinger),
+    ...parseWmSize(wmSize),
+    hz: parseRefreshRate(display, surfaceFlinger),
+  }
 }
 
 // The installed package the base id names: itself, else its first flavor; undefined when none is installed

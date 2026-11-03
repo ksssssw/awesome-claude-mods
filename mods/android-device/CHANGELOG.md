@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0
+
+- A Spec block under Device, folded until `h`: the device's hardware the way CPU-Z lays it out, a row each for the SoC, CPU (cores, governor), clusters (cores of one frequency range, minimum to maximum clock), ABIs, GPU and OpenGL ES version, memory and swap, display (resolution, density, highest refresh rate), system (security patch, kernel, build type, bootloader), build fingerprint and battery (health, temperature, voltage, technology, charge cycles). Read once per device on first unfolding, in six adb calls side by side, and kept; `r` reads it again. Facts a device does not report are left out. Folded, it reads nothing.
+- The Device block shows the One UI version on a Samsung device beside the Android version, read once per device.
+
 ## 0.2.1
 
 - The desktop app, the editor and the phone draw each block as a rounded card, the buttons without hotkey badges, one main action per row (Launch, Screenshot, Install, Play) and the rest dimmed. The first row is the last notice on one line, with the home folder as `~`, beside Refresh; the pane's own title bar names it, so no second title. An item's path is text there, opened by Open and Folder. The terminal is unchanged.

@@ -91,7 +91,7 @@ claude plugin uninstall step-tracker@awesome-claude-mods
 | --- | --- | --- | --- | --- |
 | [step-tracker](mods/step-tracker/README.ko.md) | 계획 단계, 지금 하는 일, 방금 끝낸 호출, 걸어 다니는 캐릭터가 있는 실시간 활동 그래프, 백그라운드 에이전트와 셸, 브랜치를 테두리 상자 하나에 보여 줍니다 | 프롬프트 위 band | 0 | 0.7.0 |
 | [android-logcat](mods/android-logcat/README.ko.md) | 연결된 안드로이드 단말의 logcat을 레포의 앱 기준으로 Android Studio처럼 레벨별 색을 입혀 보여 주고, 최소 레벨·텍스트 필터와 Claude용 `logcat_read` 도구를 제공합니다 | 대화 옆 pane | 꺼짐 0, 켜짐 도구 1개 | 0.1.0 |
-| [android-device](mods/android-device/README.ko.md) | 연결된 안드로이드 단말과 그 위의 레포 앱: 단말 선택, 터미널에 끌어다 놓거나 `build/`에서 고른 APK 설치(`-d`·`-t`·삭제는 물어본 뒤), 실행·종료·삭제·스크린샷·녹화·포그라운드 앱 APK 추출, Claude용 도구 여덟 개 | 대화 옆 pane | 꺼짐 0, 켜짐 도구 8개 | 0.1.0 |
+| [android-device](mods/android-device/README.ko.md) | 연결된 안드로이드 단말과 그 위의 레포 앱: 단말 선택, 터미널에 끌어다 놓거나 `build/`에서 고른 APK 설치(`-d`·`-t`·삭제는 물어본 뒤), 실행·종료·삭제·스크린샷·녹화·포그라운드 앱 APK 추출, 접었다 펼치는 하드웨어 스펙(CPU-Z 방식), Claude용 도구 여덟 개 | 대화 옆 pane | 꺼짐 0, 켜짐 도구 8개 | 0.3.0 |
 
 ## 원칙
 

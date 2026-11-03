@@ -1,3 +1,5 @@
+import type { BatteryHealth } from './model'
+
 // Every phrase the pane, the command and the tools draw, in each language the `language` option offers
 export type Language = 'en' | 'ko'
 
@@ -66,6 +68,23 @@ export type Strings = {
   askClear: (pkg: string) => string
   recording: (clock: string) => string
   savedTo: (dir: string) => string
+  // Spec
+  spec: string
+  showSpecs: string
+  hideSpecs: string
+  readingSpecs: string
+  noSpecs: string
+  specLabels: { soc: string; cpu: string; clusters: string; abi: string; gpu: string; memory: string; display: string; build: string; system: string; battery: string }
+  cores: (n: number) => string
+  governor: (name: string) => string
+  memTotal: (size: string) => string
+  memAvailable: (size: string) => string
+  swap: (total: string, used: string) => string
+  patch: (date: string) => string
+  kernel: (release: string) => string
+  bootloader: (name: string) => string
+  health: Record<BatteryHealth, string>
+  cycles: (n: number) => string
   // Buttons
   yes: string
   no: string
@@ -196,6 +215,22 @@ const EN: Strings = {
   askClear: pkg => `Clear all data of ${pkg}?`,
   recording: clock => `recording ${clock}`,
   savedTo: dir => `→ ${dir}`,
+  spec: 'Spec',
+  showSpecs: 'Hardware specs',
+  hideSpecs: 'Hide',
+  readingSpecs: 'reading the hardware\u2026',
+  noSpecs: 'the device reported no hardware facts',
+  specLabels: { soc: 'SoC', cpu: 'CPU', clusters: 'Clusters', abi: 'ABI', gpu: 'GPU', memory: 'Memory', display: 'Display', build: 'Build', system: 'System', battery: 'Battery' },
+  cores: n => `${n} cores`,
+  governor: name => `governor ${name}`,
+  memTotal: size => `${size} total`,
+  memAvailable: size => `${size} available`,
+  swap: (total, used) => `swap ${total} (${used} used)`,
+  patch: date => `patch ${date}`,
+  kernel: release => `kernel ${release}`,
+  bootloader: name => `bootloader ${name}`,
+  health: { good: 'good', overheat: 'overheat', dead: 'dead', overVoltage: 'over voltage', failure: 'failure', cold: 'cold', unknown: 'health unknown' },
+  cycles: n => `${n} cycles`,
   yes: 'Yes',
   no: 'No',
   refresh: 'Refresh',
@@ -323,6 +358,22 @@ const KO: Strings = {
   askClear: pkg => `${pkg}의 데이터를 모두 지울까요?`,
   recording: clock => `녹화 중 ${clock}`,
   savedTo: dir => `→ ${dir}`,
+  spec: '스펙',
+  showSpecs: '하드웨어 스펙 보기',
+  hideSpecs: '접기',
+  readingSpecs: '하드웨어 정보를 읽는 중\u2026',
+  noSpecs: '단말이 알려 준 하드웨어 정보가 없습니다',
+  specLabels: { soc: 'SoC', cpu: 'CPU', clusters: '클러스터', abi: 'ABI', gpu: 'GPU', memory: '메모리', display: '화면', build: '빌드', system: '시스템', battery: '배터리' },
+  cores: n => `${n}코어`,
+  governor: name => `거버너 ${name}`,
+  memTotal: size => `전체 ${size}`,
+  memAvailable: size => `가용 ${size}`,
+  swap: (total, used) => `스왑 ${total} (${used} 사용)`,
+  patch: date => `보안 패치 ${date}`,
+  kernel: release => `커널 ${release}`,
+  bootloader: name => `부트로더 ${name}`,
+  health: { good: '양호', overheat: '과열', dead: '수명 다함', overVoltage: '과전압', failure: '고장', cold: '저온', unknown: '상태 모름' },
+  cycles: n => `충전 ${n}회`,
   yes: '예',
   no: '아니요',
   refresh: '새로 고침',

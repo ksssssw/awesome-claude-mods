@@ -29,6 +29,15 @@ const DUMPSYS = [
   '    User 0: installed=true hidden=false enabled=0',
 ].join('\n')
 
+const PROPS = ['[ro.soc.manufacturer]: [QTI]', '[ro.soc.model]: [SM8550]', '[ro.board.platform]: [kalama]', '[ro.product.cpu.abilist]: [arm64-v8a,armeabi-v7a]', '[ro.sf.lcd_density]: [420]', '[ro.build.version.security_patch]: [2026-10-01]', '[ro.build.type]: [user]'].join('\n')
+const SYSFS = [
+  '/sys/devices/system/cpu/possible:0-7',
+  ...[0, 1, 2, 3].map(n => `/sys/devices/system/cpu/cpu${n}/cpufreq/cpuinfo_max_freq:1800000`),
+  ...[4, 5, 6, 7].map(n => `/sys/devices/system/cpu/cpu${n}/cpufreq/cpuinfo_max_freq:2800000`),
+  '/proc/meminfo:MemTotal:        8388608 kB',
+  '/proc/meminfo:MemAvailable:    3145728 kB',
+].join('\n')
+
 const APK = '/repo/app/build/outputs/apk/debug/app-debug.apk'
 const DROPPED = '/drops/app-release.apk'
 
@@ -115,7 +124,14 @@ function engine(on: On, devices = ONE): Adb {
     if (line.includes('getprop ro.product.manufacturer')) return ran('Google\n')
     if (line.includes('getprop ro.build.version.release')) return ran('14\n')
     if (line.includes('getprop ro.build.version.sdk')) return ran('34\n')
-    if (line.includes('dumpsys battery')) return ran('  level: 82\n')
+    if (line.includes('getprop ro.build.version.oneui')) return argv[2] === 'SERIAL2' ? ran('60100\n') : ran('', 1)
+    // The Spec block's reads: every prop, the sysfs and procfs files, SurfaceFlinger, display, wm
+    if (argv[3] === 'shell' && argv[4] === 'getprop' && argv.length === 5) return ran(PROPS)
+    if (argv[3] === 'shell' && argv[4] === 'grep') return ran(SYSFS, 2)
+    if (line.includes('dumpsys SurfaceFlinger')) return ran('GLES: Qualcomm, Adreno (TM) 740, OpenGL ES 3.2 V@0676.32\n')
+    if (line.includes('dumpsys display')) return ran('mSupportedModes=[{id=1, fps=60.0}, {id=2, fps=120.0}]\n')
+    if (line.includes('wm size')) return ran('Physical size: 1080x2400\n')
+    if (line.includes('dumpsys battery')) return ran('  level: 82\n  health: 2\n  voltage: 4123\n  temperature: 285\n  technology: Li-ion\n')
     if (line.includes('dumpsys power')) return ran('Display Power: state=ON\n')
     if (line.includes('df /data')) return ran('Filesystem 1K-blocks Used Available Use% Mounted on\n/dev/block/dm-5 112345678 42000000 22347776 66% /data\n')
     if (line.includes('list packages')) return ran(adb.isInstalled ? 'package:com.example.app.debug uid:10234\n' : '')
@@ -464,5 +480,80 @@ test('Pull APK leaves an item whose path reveals the file in its folder', async 
   await ui.press({ key: 'pull-path' })
   await settle(adb)
   expect(adb.runs.find(argv => argv[0] === 'open' && argv[1] === '-R' && argv[2]?.endsWith('.apk'))).toBeDefined()
+  await $.command.run({ command: 'adb', args: 'off', ...COMMAND } as never)
+})
+
+test('the Spec block stays folded and reads nothing until h; unfolded it reads the hardware once, Refresh again', async ($, on) => {
+  const adb = engine(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await turnOn($, adb)
+  const reads = () => adb.runs.filter(argv => argv.join(' ').includes('dumpsys SurfaceFlinger')).length
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Button', key: 'spec', text: /Hardware specs/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /SM8550/ })).toBeUndefined()
+  for (let i = 0; i < 3; i++) await adb.clock.advance(10_000)
+  expect(reads()).toBe(0)
+  // A Pixel has no One UI
+  expect(await ui.find({ type: 'Text', text: /One UI/ })).toBeUndefined()
+
+  await ui.press({ key: 'spec' })
+  await settle(adb)
+  expect(await ui.find({ type: 'Button', key: 'spec', text: /Hide/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /QTI SM8550 \(kalama\)/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /8 cores/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /4 × 1\.80 GHz · 4 × 2\.80 GHz/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Qualcomm Adreno \(TM\) 740 · OpenGL ES 3\.2/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /8\.0 GB total · 3\.0 GB available/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /1080×2400 · 420 dpi · 120 Hz/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /good · 28\.5 °C · 4\.12 V · Li-ion/ })).toBeDefined()
+  expect(reads()).toBe(1)
+
+  // Folded and unfolded again: from the cache; the 10-second poll reads no hardware
+  await ui.press({ key: 'spec' })
+  expect(await ui.find({ type: 'Text', text: /SM8550/ })).toBeUndefined()
+  await ui.press({ key: 'spec' })
+  await settle(adb)
+  for (let i = 0; i < 2; i++) await adb.clock.advance(10_000)
+  expect(await ui.find({ type: 'Text', text: /SM8550/ })).toBeDefined()
+  expect(reads()).toBe(1)
+
+  await ui.press({ key: 'refresh' })
+  await settle(adb)
+  expect(reads()).toBe(2)
+  await ui.unmount()
+
+  // The desktop draws the rows in a card under its caption
+  const gui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await gui.find({ type: 'Text', text: /^SPEC$/ })).toBeDefined()
+  expect(await gui.find({ type: 'Text', text: /QTI SM8550/ })).toBeDefined()
+  await gui.unmount()
+  await $.command.run({ command: 'adb', args: 'off', ...COMMAND } as never)
+})
+
+test('a Samsung device shows its One UI version beside Android, read once', async ($, on) => {
+  const adb = engine(on, TWO)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await turnOn($, adb, 'select 2')
+  await settle(adb)
+  for (let i = 0; i < 2; i++) await adb.clock.advance(10_000)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /SERIAL2 · Android 14 \(API 34\) · One UI 6\.1 · screen on/ })).toBeDefined()
+  expect(adb.runs.filter(argv => argv[2] === 'SERIAL2' && argv.includes('ro.build.version.oneui'))).toHaveLength(1)
+  await ui.unmount()
+  await $.command.run({ command: 'adb', args: 'off', ...COMMAND } as never)
+})
+
+test('with language set to ko the Spec rows line up under Korean labels', { options: { language: 'ko' } }, async ($, on) => {
+  const adb = engine(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await turnOn($, adb)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'spec' })
+  await settle(adb)
+  expect(await ui.find({ type: 'Text', text: /^메모리\s+$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /8코어/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /전체 8\.0 GB · 가용 3\.0 GB/ })).toBeDefined()
+  await ui.unmount()
   await $.command.run({ command: 'adb', args: 'off', ...COMMAND } as never)
 })

@@ -25,6 +25,19 @@ import {
   pulledName,
   refineFailure,
   sortApks,
+  cellWidth,
+  countCpus,
+  formatCluster,
+  padCells,
+  parseBatteryDetail,
+  parseGles,
+  parseGrep,
+  parseProps,
+  parseRefreshRate,
+  parseWmSize,
+  propSpecs,
+  skinOf,
+  sysfsSpecs,
 } from '../hooks/model'
 
 const DEVICES = [
@@ -211,4 +224,98 @@ test('a picture fits its box keeping its shape, a cell being twice as tall as wi
   expect(fitCells(1080, 2340, 80, 24)).toEqual({ columns: 22, rows: 24 })
   // A landscape picture in a narrow pane is held by the columns
   expect(fitCells(2340, 1080, 40, 24)).toEqual({ columns: 40, rows: 9 })
+})
+
+test('skinOf reads One UI from its prop and nothing on a device without it', () => {
+  expect(skinOf({ 'ro.build.version.oneui': '60100' })).toEqual({ name: 'One UI', version: '6.1' })
+  expect(skinOf({ 'ro.build.version.oneui': '80500' })).toEqual({ name: 'One UI', version: '8.5' })
+  expect(skinOf({ 'ro.build.version.oneui': '70000\n' })).toEqual({ name: 'One UI', version: '7.0' })
+  expect(skinOf({})).toBeUndefined()
+  expect(skinOf({ 'ro.build.version.oneui': 'x' })).toBeUndefined()
+})
+
+test('the props give the SoC, falling back from ro.soc.* to the board and the hardware', () => {
+  const props = parseProps(
+    [
+      '[ro.soc.manufacturer]: [QTI]',
+      '[ro.soc.model]: [SM8550]',
+      '[ro.board.platform]: [kalama]',
+      '[ro.product.cpu.abilist]: [arm64-v8a,armeabi-v7a,armeabi]',
+      '[ro.sf.lcd_density]: [450]',
+      '[ro.build.fingerprint]: [samsung/dm3qksx/dm3q:14/UP1A/S918NKSU3BWK1:user/release-keys]',
+      '[ro.build.version.security_patch]: [2026-10-01]',
+      '[ro.bootloader]: [S918NKSU3BWK1]',
+      '[ro.build.type]: [user]',
+      '[ro.empty]: []',
+    ].join('\n'),
+  )
+  expect(props['ro.empty']).toBeUndefined()
+  expect(propSpecs(props)).toEqual({
+    soc: 'QTI SM8550 (kalama)',
+    abis: ['arm64-v8a', 'armeabi-v7a', 'armeabi'],
+    dpi: 450,
+    fingerprint: 'samsung/dm3qksx/dm3q:14/UP1A/S918NKSU3BWK1:user/release-keys',
+    patch: '2026-10-01',
+    bootloader: 'S918NKSU3BWK1',
+    buildType: 'user',
+  })
+  expect(propSpecs({ 'ro.board.platform': 'msm8998', 'ro.hardware': 'qcom' }).soc).toBe('msm8998')
+  expect(propSpecs({ 'ro.hardware': 'qcom' }).soc).toBe('qcom')
+  expect(propSpecs({ 'ro.soc.manufacturer': 'Google', 'ro.soc.model': 'Tensor G3', 'ro.board.platform': 'zuma', 'ro.bootloader': 'unknown' })).toMatchObject({ soc: 'Google Tensor G3 (zuma)', bootloader: undefined })
+})
+
+test('sysfs gives the cores in clusters slowest first, the governors, memory, kernel and cycles', () => {
+  const cpu = (n: number, min: number, max: number) => [
+    `/sys/devices/system/cpu/cpu${n}/cpufreq/cpuinfo_min_freq:${min}`,
+    `/sys/devices/system/cpu/cpu${n}/cpufreq/cpuinfo_max_freq:${max}`,
+    `/sys/devices/system/cpu/cpu${n}/cpufreq/scaling_governor:walt`,
+  ]
+  const out = [
+    '/sys/devices/system/cpu/possible:0-7',
+    ...cpu(7, 595200, 3360000),
+    ...[0, 1, 2].flatMap(n => cpu(n, 307200, 2016000)),
+    ...[3, 4, 5, 6].flatMap(n => cpu(n, 499200, 2803200)),
+    '/proc/meminfo:MemTotal:        7801234 kB',
+    '/proc/meminfo:MemFree:          201234 kB',
+    '/proc/meminfo:MemAvailable:    3101234 kB',
+    '/proc/meminfo:SwapTotal:       4194300 kB',
+    '/proc/meminfo:SwapFree:        3000000 kB',
+    '/proc/sys/kernel/osrelease:5.15.123-android14-11-gabc',
+    '/sys/class/power_supply/battery/cycle_count:312',
+    'grep: /sys/class/power_supply/battery/charge_full: Permission denied',
+  ].join('\n')
+  const sp = sysfsSpecs(parseGrep(out))
+  expect(sp.cores).toBe(8)
+  expect(sp.clusters).toEqual([
+    { count: 3, minKhz: 307200, maxKhz: 2016000 },
+    { count: 4, minKhz: 499200, maxKhz: 2803200 },
+    { count: 1, minKhz: 595200, maxKhz: 3360000 },
+  ])
+  expect(sp.clusters.map(formatCluster)).toEqual(['3 × 0.31–2.02 GHz', '4 × 0.50–2.80 GHz', '1 × 0.60–3.36 GHz'])
+  expect(sp.governors).toEqual(['walt'])
+  expect(sp).toMatchObject({ memTotalKb: 7801234, memAvailableKb: 3101234, swapTotalKb: 4194300, swapFreeKb: 3000000, kernel: '5.15.123-android14-11-gabc', cycles: 312 })
+  // Nothing readable: no cores, no clusters, nothing made up
+  expect(sysfsSpecs([])).toMatchObject({ cores: undefined, clusters: [], governors: [], memTotalKb: undefined, swapTotalKb: undefined })
+  expect(countCpus('0-3,4-7')).toBe(8)
+  expect(countCpus('0,2-3')).toBe(3)
+  expect(countCpus('x')).toBeUndefined()
+})
+
+test('the GPU, refresh rate, screen size and battery detail parse from dumpsys and wm', () => {
+  expect(parseGles('Some header\nGLES: Qualcomm, Adreno (TM) 740, OpenGL ES 3.2 V@0676.32 (GIT@abc)\n')).toEqual({ gpu: 'Qualcomm Adreno (TM) 740', gles: 'OpenGL ES 3.2' })
+  expect(parseGles('GLES: ARM, Mali-G715, OpenGL ES 3.2 v1.r44p1\n')).toEqual({ gpu: 'ARM Mali-G715', gles: 'OpenGL ES 3.2' })
+  expect(parseGles('nothing here')).toEqual({})
+  expect(parseRefreshRate('mSupportedModes=[{id=1, width=1080, height=2340, fps=60.000004}, {id=2, width=1080, height=2340, fps=120.00001}]')).toBe(120)
+  expect(parseRefreshRate('', '    refresh-rate              : 90.000000 fps')).toBe(90)
+  expect(parseRefreshRate('', '')).toBeUndefined()
+  expect(parseWmSize('Physical size: 1080x2340\nOverride size: 720x1560\n')).toEqual({ width: 1080, height: 2340 })
+  expect(parseWmSize('')).toEqual({})
+  expect(parseBatteryDetail('  level: 82\n  health: 2\n  voltage: 4123\n  temperature: 285\n  technology: Li-ion\n')).toEqual({ health: 'good', tempC: 28.5, voltageMv: 4123, technology: 'Li-ion' })
+  expect(parseBatteryDetail('  health: 9\n  voltage: 4\n')).toMatchObject({ health: 'unknown', voltageMv: 4000, tempC: undefined })
+})
+
+test('a Hangul label takes two cells a character, so the spec rows line up', () => {
+  expect(cellWidth('메모리')).toBe(6)
+  expect(cellWidth('GPU')).toBe(3)
+  expect(padCells('화면', 8)).toBe('화면    ')
 })
