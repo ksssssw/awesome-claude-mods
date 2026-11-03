@@ -41,6 +41,8 @@ export type Strings = {
   close: string
   latest: (count: number) => string
   listEmpty: string
+  activityAlt: string
+  timelineAlt: string
   idle: string
   thisTurn: string
 }
@@ -88,6 +90,8 @@ const EN: Strings = {
   close: '‹ Close',
   latest: count => `(latest ${count})`,
   listEmpty: "This turn's calls collect here",
+  activityAlt: "This turn's calls over time, with Claude's mascot",
+  timelineAlt: "The step's time on the plan's timeline",
   idle: '· Idle',
   thisTurn: 'This turn',
 }
@@ -131,6 +135,8 @@ const KO: Strings = {
   close: '‹ 닫기',
   latest: count => `(최근 ${count}개)`,
   listEmpty: '이번 턴의 호출이 여기에 쌓입니다',
+  activityAlt: '이번 턴의 시간별 호출과 Claude 마스코트',
+  timelineAlt: '계획 타임라인에서 이 단계가 차지한 시간',
   idle: '· 대기 중',
   thisTurn: '이번 턴',
 }

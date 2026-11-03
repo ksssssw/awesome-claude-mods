@@ -33,7 +33,8 @@ import {
   windowOffset,
 } from './model'
 import { setLanguage, t } from './i18n'
-import { activityCells, timelineCells } from './timeline'
+import { gridSvg } from './svg'
+import { activityCells, activityGrid, timelineCells, timelineGrid } from './timeline'
 
 const PLUGIN = 'step-tracker'
 // Change the tag when a step's fields change: it declines what an earlier version stored
@@ -442,7 +443,12 @@ export const register: Register = (on, options) => {
 // with none the calls just done, fading as they rise) with a graph beside it, a divider, and under it
 // what goes on now, the counts and the agents
 async function drawBand($: $, e: any, list: Step[], now: { isWorking: boolean; startedAt: number }) {
-  const { Box, Text, Button } = $.ui.resolve(e)
+  const table = $.ui.resolve(e)
+  const { Box, Text, Button } = table
+  // The terminal draws the frame in box-drawing text and the graph as a Raster; a surface with a proportional
+  // font draws a bordered Box, its height fitted to what it holds, and the graph as an Svg
+  const isTui = e.surface === 'terminal'
+  const Svg = 'Svg' in table ? table.Svg : undefined
   const width: number = e.props.bodyColumns
   const at = await $.clock.now()
   const where = await read($, repo)
@@ -495,7 +501,7 @@ async function drawBand($: $, e: any, list: Step[], now: { isWorking: boolean; s
 
   // The graph beside the list: the steps' timeline, or with no step the turn's calls and the mascot
   wasGraphShown =
-    e.surface === 'terminal' && !view && (isPlanless || span !== null) && isGraphShown(wasGraphShown, width)
+    (isTui || Svg !== undefined) && !view && (isPlanless || span !== null) && isGraphShown(wasGraphShown, width)
   const graphWidth = wasGraphShown ? inner - Math.floor(inner * 0.6) - 2 : 0
   const listWidth = wasGraphShown ? inner - graphWidth - 2 : inner
   const percent = (await $.session.usage()).context.percent
@@ -651,7 +657,7 @@ async function drawBand($: $, e: any, list: Step[], now: { isWorking: boolean; s
         {t().listEmpty}
       </Text>,
     ]
-  } else if (isPlanless) {
+  } else if (isPlanless && isTui) {
     // Against the divider: blank rows above, so a new call rises from the bottom
     listLines = [
       ...Array.from({ length: Math.max(0, listRows - slice.length) }, (_, k) => blank('rise-' + k)),
@@ -662,10 +668,21 @@ async function drawBand($: $, e: any, list: Step[], now: { isWorking: boolean; s
   }
 
   let graph = null
-  if (wasGraphShown) {
+  // Off the terminal, the timeline's rows, each drawn in its list row so the two stay level
+  let timelineRows: any[] | null = null
+  const mood = !now.isWorking ? 'idle' : phase.kind === 'thinking' || phase.kind === 'waiting' ? 'thinking' : 'working'
+  if (wasGraphShown && !isTui && Svg) {
+    if (isPlanless) {
+      isShimmering = true
+      graph = <Svg key="activity" source={gridSvg(activityGrid(log, graphWidth, listRows, at, frame, mood))} alt={t().activityAlt} />
+    } else if (span) {
+      timelineRows = timelineGrid(slice, graphWidth, span, at, frame).map((row, k) => (
+        <Svg key={'timeline-' + k} source={gridSvg([row])} alt={t().timelineAlt} />
+      ))
+    }
+  } else if (wasGraphShown) {
     const { Raster } = $.ui.resolve(e)
     if (isPlanless) {
-      const mood = !now.isWorking ? 'idle' : phase.kind === 'thinking' || phase.kind === 'waiting' ? 'thinking' : 'working'
       isShimmering = true
       graph = (
         <Raster key="activity" columns={graphWidth} rows={listRows} cells={activityCells(log, graphWidth, listRows, at, frame, mood)} />
@@ -759,6 +776,57 @@ async function drawBand($: $, e: any, list: Step[], now: { isWorking: boolean; s
 
   const lower = [activity, ...(statsLine ? [statsLine] : []), ...agentLines]
   const lowerRows = 1 + (layout.hasStats ? 1 : 0) + layout.agentRows
+
+  if (!isTui) {
+    // The header as a row of its own: what the plan is on at the left, the clock and context at the right
+    const header = (
+      <Box flexDirection="row" justifyContent="space-between" key="top">
+        <Box flexDirection="row" flexShrink={1} overflow="hidden">
+          <Text weight="bold">STEPS</Text>
+          {count && <Text color={isFinished ? 'success' : 'claude'}>{count}</Text>}
+          {where && <Text dimColor> · </Text>}
+          {where && showName && <Text dimColor>{repoName}</Text>}
+          {where && (
+            <Text color="suggestion" wrap="truncate-end">
+              {branch}
+            </Text>
+          )}
+          {where?.isDirty && <Text color="warning">*</Text>}
+          {where && !isNarrow && where.ahead > 0 && <Text dimColor> ↑{where.ahead}</Text>}
+        </Box>
+        <Text dimColor>{right.trim()}</Text>
+      </Box>
+    )
+    const list = timelineRows ? (
+      <Box flexDirection="column" key="list">
+        {...listLines.map((line, k) => (
+          <Box flexDirection="row" columnGap={2} alignItems="center" key={'list-row-' + k}>
+            <Box width={listWidth} overflow="hidden">
+              {line}
+            </Box>
+            <Box width={graphWidth}>{timelineRows![k] ?? null}</Box>
+          </Box>
+        ))}
+      </Box>
+    ) : (
+      <Box flexDirection="row" columnGap={graph ? 2 : 0} alignItems="flex-end" key="list">
+        <Box flexDirection="column" width={graph ? listWidth : inner} overflow="hidden">
+          {...listLines}
+        </Box>
+        {graph && <Box width={graphWidth}>{graph}</Box>}
+      </Box>
+    )
+    return (
+      <Box flexDirection="column" width={width} borderStyle="round" borderColor={frameColor} paddingX={1}>
+        {header}
+        {list}
+        <Box flexDirection="column" marginTop={1} key="lower">
+          {...lower}
+        </Box>
+      </Box>
+    )
+  }
+
   return (
     <Box flexDirection="column" width={width}>
       {top}
