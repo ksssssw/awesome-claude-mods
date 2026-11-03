@@ -8,6 +8,8 @@ import {
   badging,
   clearData,
   deviceInfo,
+  deviceSkin,
+  deviceSpecs,
   findAapt,
   findAdb,
   findFfmpeg,
@@ -35,11 +37,13 @@ import {
   barCells,
   basename,
   captureName,
+  cellWidth,
   chooseSerial,
   classifyFailure,
   dirname,
   flagOf,
   formatBytes,
+  formatCluster,
   formatClock,
   formatDuration,
   fitCells,
@@ -48,6 +52,7 @@ import {
   isPackageName,
   clampInt,
   isSerial,
+  padCells,
   pngSize,
   pulledName,
   refineFailure,
@@ -55,7 +60,7 @@ import {
   shortStamp,
   tildePath,
 } from './model'
-import type { AppInfo, Badging, Device, DeviceInfo } from './model'
+import type { AppInfo, Badging, Device, DeviceInfo, Skin, Specs } from './model'
 
 const PANE = 'adb'
 const COMMAND = 'adb'
@@ -85,6 +90,7 @@ const recording = atom({ plugin: 'android-device', key: 'recording' } as const, 
 const lastShot = atom({ plugin: 'android-device', key: 'lastShot' } as const, null)
 const lastVideo = atom({ plugin: 'android-device', key: 'lastVideo' } as const, null)
 const lastPull = atom({ plugin: 'android-device', key: 'lastPull' } as const, null)
+const specOpen = atom({ plugin: 'android-device', key: 'specOpen' } as const, false)
 
 type Options = { package: string; serial: string; outputDir: string; grantPermissions: boolean; rows: number }
 
@@ -96,6 +102,10 @@ let adbPath: string | undefined
 let aaptPath: string | null | undefined
 let devices: Device[] = []
 let info: DeviceInfo | undefined
+// Read once per device: its skin (null: none) and, once the Spec block is unfolded, its hardware
+const skins = new Map<string, Skin | null>()
+const specs = new Map<string, Specs>()
+let specsLoading: string | undefined
 // The id the repo or the person names, and the installed package it resolves to (a flavor of it, or itself)
 let base: string | undefined
 let pkg: string | undefined
@@ -185,13 +195,43 @@ async function refreshStatus($: EngineInterface) {
     return
   }
   info = await deviceInfo($, adb, s)
+  if (!skins.has(s)) skins.set(s, (await deviceSkin($, adb, s)) ?? null)
+  if ((await read($, specOpen)) && !specs.has(s)) inBackground($, loadSpecs($))
   base = await packageBase($)
   pkg = base ? ((await resolvePackage($, adb, s, base)) ?? base) : undefined
   app = pkg ? await appInfo($, adb, s, pkg) : undefined
   mark()
 }
 
-async function refreshAll($: EngineInterface) {
+// Reads the chosen device's hardware into the cache; another read for the same device waits for none
+async function loadSpecs($: EngineInterface) {
+  const adb = await ensureAdb($)
+  const s = await read($, serial)
+  if (!adb || !s || chosenDevice(s)?.state !== 'device' || specsLoading === s) return
+  specsLoading = s
+  mark()
+  try {
+    specs.set(s, await deviceSpecs($, adb, s))
+  } finally {
+    specsLoading = undefined
+    mark()
+  }
+}
+
+async function toggleSpecs($: EngineInterface) {
+  const open = !(await read($, specOpen))
+  await update($, specOpen, () => open)
+  mark()
+  if (open && !specs.has(await read($, serial))) await loadSpecs($)
+}
+
+// With force (Refresh), the chosen device's hardware is read again too, where the Spec block is unfolded
+async function refreshAll($: EngineInterface, force = false) {
+  if (force) {
+    const s = await read($, serial)
+    specs.delete(s)
+    skins.delete(s)
+  }
   await refreshRepo($)
   await refreshDevices($)
   await refreshStatus($)
@@ -690,8 +730,54 @@ function describeDevice(d: Device, i: DeviceInfo | undefined): { head: string[];
   head.push(d.state === 'unauthorized' ? s.unauthorized : d.state === 'offline' ? s.offline : d.state)
   const detail = [d.serial]
   if (i?.release && i.sdk) detail.push(s.api(i.release, i.sdk))
+  const skin = skins.get(d.serial)
+  if (skin) detail.push(`${skin.name} ${skin.version}`)
   if (i?.screen) detail.push(i.screen === 'on' ? s.screenOn : s.screenOff)
   return { head, detail }
+}
+
+// The Spec block's rows, a label and its facts; a fact the device did not report is left out, a row without any too
+function specRows(sp: Specs): { label: string; text: string }[] {
+  const s = t()
+  const L = s.specLabels
+  const kb = (n: number) => formatBytes(n * 1024)
+  const rows: { label: string; parts: (string | undefined)[] }[] = [
+    { label: L.soc, parts: [sp.soc] },
+    { label: L.cpu, parts: [sp.cores !== undefined ? s.cores(sp.cores) : undefined, sp.governors.length > 0 ? s.governor(sp.governors.join(', ')) : undefined] },
+    { label: L.clusters, parts: sp.clusters.map(formatCluster) },
+    { label: L.abi, parts: [sp.abis.join(', ') || undefined] },
+    { label: L.gpu, parts: [sp.gpu, sp.gles] },
+    {
+      label: L.memory,
+      parts: [
+        sp.memTotalKb !== undefined ? s.memTotal(kb(sp.memTotalKb)) : undefined,
+        sp.memAvailableKb !== undefined ? s.memAvailable(kb(sp.memAvailableKb)) : undefined,
+        sp.swapTotalKb !== undefined ? s.swap(kb(sp.swapTotalKb), kb(sp.swapTotalKb - (sp.swapFreeKb ?? 0))) : undefined,
+      ],
+    },
+    {
+      label: L.display,
+      parts: [sp.width && sp.height ? `${sp.width}\u00d7${sp.height}` : undefined, sp.dpi !== undefined ? `${sp.dpi} dpi` : undefined, sp.hz !== undefined ? `${sp.hz} Hz` : undefined],
+    },
+    {
+      label: L.system,
+      parts: [sp.patch ? s.patch(sp.patch) : undefined, sp.kernel ? s.kernel(sp.kernel) : undefined, sp.buildType, sp.bootloader ? s.bootloader(sp.bootloader) : undefined],
+    },
+    { label: L.build, parts: [sp.fingerprint] },
+    {
+      label: L.battery,
+      parts: [
+        sp.health ? s.health[sp.health] : undefined,
+        sp.tempC !== undefined ? `${sp.tempC.toFixed(1)} \u00b0C` : undefined,
+        sp.voltageMv !== undefined ? `${(sp.voltageMv / 1000).toFixed(2)} V` : undefined,
+        sp.technology,
+        sp.cycles !== undefined ? s.cycles(sp.cycles) : undefined,
+      ],
+    },
+  ]
+  return rows
+    .map(row => ({ label: row.label, text: row.parts.filter((x): x is string => typeof x === 'string' && x !== '').join(' \u00b7 ') }))
+    .filter(row => row.text !== '')
 }
 
 // The package a tool names, else the repo's app as installed on the chosen device
@@ -828,7 +914,7 @@ export const register: Register = (on, opts) => {
         if (!wasOn) await turnOn($)
         aaptPath = undefined
         adbPath = undefined
-        await refreshAll($)
+        await refreshAll($, true)
         return { text: s.refreshed }
       default:
         return { text: `/adb ${s.argumentHint}` }
@@ -972,6 +1058,7 @@ export const register: Register = (on, opts) => {
     const shot = await read($, lastShot)
     const video = await read($, lastVideo)
     const pulled = await read($, lastPull)
+    const isSpecOpen = await read($, specOpen)
     const home = await $.env.get('HOME')
     const d = chosenDevice(chosen)
     // A question locks the other keys until it is answered
@@ -1158,6 +1245,27 @@ export const register: Register = (on, opts) => {
           </Button>,
         )
       : null
+
+    // Spec: folded, a button alone; unfolded, the hardware the device reported, read once
+    const sp = d ? specs.get(d.serial) : undefined
+    const specButton = !isLocked && picking === 'none' && (
+      <Button key="spec" hotkey={hk("h")} dimColor={minor && isSpecOpen} onPress={() => inBackground($, toggleSpecs($))}>
+        {isSpecOpen ? s.hideSpecs : s.showSpecs}
+      </Button>
+    )
+    const rows = isSpecOpen && sp ? specRows(sp) : []
+    const labelWidth = Math.max(0, ...rows.map(r => cellWidth(r.label))) + 2
+    const specLines: RenderChildren[] =
+      !isSpecOpen ? []
+      : specsLoading === d?.serial && !sp ? [<Text dimColor>{s.readingSpecs}</Text>]
+      : sp && rows.length === 0 ? [<Text dimColor>{s.noSpecs}</Text>]
+      : rows.map(row => (
+          <Text wrap="truncate-end" size={isTui ? undefined : 'caption'}>
+            <Text dimColor>{isTui ? padCells(row.label, labelWidth) : `${row.label}  `}</Text>
+            {row.text}
+          </Text>
+        ))
+    const showSpec = d !== undefined && d.state === 'device'
 
     // App
     const appLines: Line[] =
@@ -1370,7 +1478,7 @@ export const register: Register = (on, opts) => {
           </Text>
         </Box>
         {!isLocked && (
-          <Button key="refresh" dimColor onPress={() => inBackground($, refreshAll($))}>
+          <Button key="refresh" dimColor onPress={() => inBackground($, refreshAll($, true))}>
             {s.refresh}
           </Button>
         )}
@@ -1389,13 +1497,15 @@ export const register: Register = (on, opts) => {
             </Text>
           </Text>
           {!isLocked && (
-            <Button key="refresh" hotkey={hk("r")} onPress={() => inBackground($, refreshAll($))}>
+            <Button key="refresh" hotkey={hk("r")} onPress={() => inBackground($, refreshAll($, true))}>
               {s.refresh}
             </Button>
           )}
         </Box>}
         {block(s.device, devices.length > 0 ? s.connected(devices.length) : undefined, deviceLines, gauges, deviceRest)}
         {isTui && gap}
+        {showSpec && block(s.spec, undefined, [], specButton || <Text> </Text>, ...specLines)}
+        {showSpec && isTui && gap}
         {block(s.app, appRight, appLines, appRest)}
         {isTui && gap}
         {block(s.install, undefined, installLines, apkNote ? <Text dimColor>{apkNote}</Text> : null, installRest)}

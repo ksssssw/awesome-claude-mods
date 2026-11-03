@@ -46,6 +46,9 @@ export type LastVideo = { path: string; poster?: string; width?: number; height?
 // The last APK pull: the package, its version, and the files (the base first, then the splits)
 export type LastPull = { package: string; version?: string; paths: string[]; at: number } | null
 
+// Whether the Spec block is unfolded; folded at the start of a session
+export type SpecOpen = boolean
+
 // The values this mod keeps in $.state, by key
 declare module 'claude-code' {
   interface PluginState {
@@ -61,6 +64,7 @@ declare module 'claude-code' {
       lastShot: LastShot
       lastVideo: LastVideo
       lastPull: LastPull
+      specOpen: SpecOpen
     }
   }
 }

@@ -2,7 +2,7 @@
 
 English | [한국어](README.ko.md)
 
-A pane beside the Claude Code transcript that shows the connected Android device and the state of the repo's app on it, installs an APK you drop on the terminal or pick from the build folder, and launches, stops, uninstalls, screenshots or records the app. `/adb` turns it on and off.
+A pane beside the Claude Code transcript that shows the connected Android device and the state of the repo's app on it, shows its hardware on demand, installs an APK you drop on the terminal or pick from the build folder, and launches, stops, uninstalls, screenshots or records the app. `/adb` turns it on and off.
 
 It costs **zero tokens while off**. While on, eight small tool definitions (`device_list`, `apk_list`, `apk_install`, `package_info`, `app_launch`, `app_stop`, `screenshot`, `apk_pull`) sit in the prompt's tool list so Claude can build, install and run the app for you; off again, they wait behind ToolSearch.
 
@@ -20,6 +20,7 @@ Device   Pixel 7 · Google · USB · device                         2 connected
          1A2B3C4D · Android 14 (API 34) · screen on
          Battery ██████████░░ 82%   Storage ████████░░░░ 21.3 GB free of 112 GB
          (d) Switch device
+Spec     (h) Hardware specs
 App      com.example.app.debug                                     installed
          v2.3.1 (2310) · updated 11-02 14:20 · running (pid 12345)
          (l) Launch  (s) Stop  (u) Uninstall  (c) Clear data
@@ -38,7 +39,23 @@ Shot     ▓▓▓▓▓▓▓▓  ~/Downloads/Pixel_7_20261102-142011.png
 
 The desktop app, the editor and the phone draw the same blocks as cards: a small caption heads each (`DEVICE`, `APP`, `INSTALL`), the first line is bold, the gauges are colored strips, and the buttons are buttons, with no hotkey badges and one main action per row. Where the surface seats the pane (docked beside a fullscreen transcript, or inline above the prompt in a narrower terminal) is the surface's choice.
 
-- **Device**: the chosen device (model, maker, USB or Wi-Fi, adb state), its serial, Android version and API level, whether the screen is on, then two gauges: battery (green, amber under 50%, red under 20%) and `/data` used, with the free space beside it. With several devices connected nothing is chosen until you press `d` and a digit; with one, it is chosen for you. A device that drops out is unchosen and the line says so.
+- **Device**: the chosen device (model, maker, USB or Wi-Fi, adb state), its serial, Android version and API level, the One UI version on a Samsung device (read once per device), whether the screen is on, then two gauges: battery (green, amber under 50%, red under 20%) and `/data` used, with the free space beside it. With several devices connected nothing is chosen until you press `d` and a digit; with one, it is chosen for you. A device that drops out is unchosen and the line says so.
+- **Spec**: folded until you press `h`, and nothing is read until then. Unfolded, the device's hardware the way CPU-Z lays it out, a row each: SoC (`ro.soc.manufacturer` and `ro.soc.model` on Android 12 and later, else the board platform, else the hardware), CPU (cores and governor), clusters (cores of the same frequency range with their minimum and maximum clock, slowest first), ABIs, GPU (renderer and OpenGL ES version), memory (total, available, swap), display (physical resolution, density, highest refresh rate), system (security patch, kernel, build type, bootloader), build fingerprint, and battery (health, temperature, voltage, technology, and charge cycles where the device exposes them). A fact the device does not report is left out, and so is a row with none. It is read once per device, when first unfolded, and kept; `r` reads it again. A new session starts folded; a hot reload keeps it as it was.
+
+  ```
+  Spec     (h) Hide
+           SoC       QTI SM8550 (kalama)
+           CPU       8 cores · governor walt
+           Clusters  3 × 0.31–2.02 GHz · 4 × 0.50–2.80 GHz · 1 × 0.60–3.36 GHz
+           ABI       arm64-v8a, armeabi-v7a, armeabi
+           GPU       Qualcomm Adreno (TM) 740 · OpenGL ES 3.2
+           Memory    7.4 GB total · 3.0 GB available · swap 4.0 GB (1.1 GB used)
+           Display   1080×2340 · 450 dpi · 120 Hz
+           System    patch 2026-10-01 · kernel 5.15.123-android14 · user · bootloader S918NKSU3BWK1
+           Build     samsung/dm3qksx/dm3q:14/UP1A.231005.007/S918NKSU3BWK1:user/release-keys
+           Battery   good · 28.5 °C · 4.12 V · Li-ion · 312 cycles
+  ```
+
 - **App**: the repo's package as installed on the device: version name and code, when it was last updated, who installed it, whether it is disabled, whether it runs. `not installed` when it is not there.
 - **Install**: the APK that waits, where it came from and the flags a retry added. While an install runs the row counts the seconds; when it fails, the reason and a question take the row (below).
 - **Last**: the file the last install sent, the package it put on the device and its version, read back from the device itself, with when and how long it took.
@@ -70,7 +87,7 @@ After a success the Last row shows the package, `versionName` and `versionCode` 
 ## Interaction
 
 - `/adb` turns the pane on; `/adb` again, `/adb off` or closing the pane (Ctrl+X X) turns it off and stops polling.
-- With the pane focused (Ctrl+X Tab): `r` refreshes, `d` then `1`–`9` picks a device, `l` launches the app, `s` force-stops it, `u` uninstalls and `c` clears its data (each after a `y`/`n` question), `i` installs the waiting APK, `a` lists the repo's APKs, `x` cancels, `p` takes a screenshot, `o` opens it, `k` plays or stops the last recording in the pane, `v` starts and stops a recording (three minutes at most, the `screenrecord` limit), `e` pulls the APK of the app in the foreground.
+- With the pane focused (Ctrl+X Tab): `r` refreshes (the hardware too, where Spec is unfolded), `h` folds or unfolds Spec, `d` then `1`–`9` picks a device, `l` launches the app, `s` force-stops it, `u` uninstalls and `c` clears its data (each after a `y`/`n` question), `i` installs the waiting APK, `a` lists the repo's APKs, `x` cancels, `p` takes a screenshot, `o` opens it, `k` plays or stops the last recording in the pane, `v` starts and stops a recording (three minutes at most, the `screenrecord` limit), `e` pulls the APK of the app in the foreground.
 - `/adb select <serial|n>`, `/adb install <path>`, `/adb apk`, `/adb package <name>` (follow another package this session), `/adb launch`, `/adb stop`, `/adb uninstall`, `/adb clear`, `/adb screenshot`, `/adb record`, `/adb pull [<package>]`, `/adb refresh` do the same from the prompt. `uninstall` and `clear` still ask in the pane.
 - Claude's tools while the pane is on: `device_list`, `apk_list`, `apk_install` (`path`, `allowDowngrade`, `allowTestOnly`), `package_info`, `app_launch`, `app_stop`, `screenshot`, `apk_pull` (`package`, default the app in the foreground). A failed `apk_install` tells Claude why and that `y` in the pane, or the call again with the flag, retries; it never retries by itself, and uninstall, clear data and recording are not tools.
 
@@ -101,7 +118,7 @@ Restart Claude Code to apply them.
 
 ## Behavior
 
-- Nothing runs until `/adb`. On, the mod runs `adb` (from `PATH`, else `$ANDROID_HOME/platform-tools`): `adb devices -l` every two seconds, and the chosen device's `getprop`, `dumpsys battery`, `dumpsys power`, `df` and the app's `dumpsys package` every ten seconds and right after each action. Polling pauses while an install or a capture runs.
+- Nothing runs until `/adb`. On, the mod runs `adb` (from `PATH`, else `$ANDROID_HOME/platform-tools`): `adb devices -l` every two seconds, and the chosen device's `getprop`, `dumpsys battery`, `dumpsys power`, `df` and the app's `dumpsys package` every ten seconds and right after each action. Spec's reads (every prop, the CPU and memory files under `/sys` and `/proc`, `dumpsys battery`, `dumpsys SurfaceFlinger`, `dumpsys display`, `wm size`) run only when it is unfolded on a device not read yet, or on `r`. Polling pauses while an install or a capture runs.
 - Every value handed to adb is one argument, never a shell line; serials and package names from the prompt are checked first.
 - A hot reload keeps the chosen device, the waiting APK and an open question; the pane comes back by itself. A recording that was running is stopped and pulled.
 - Nothing leaves the machine: adb talks to the device alone.
@@ -117,7 +134,7 @@ Restart Claude Code to apply them.
 
 ```bash
 claude plugin validate mods/android-device --profile directory
-claude plugin test mods/android-device        # 22 tests
+claude plugin test mods/android-device        # 35 tests
 claude --plugin-dir mods/android-device       # load this folder directly, reloading on save
 ```
 

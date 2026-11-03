@@ -370,3 +370,241 @@ export function tildePath(path: string, home: string | undefined): string {
   const root = home.replace(/\/+$/, '')
   return path === root ? '~' : path.startsWith(`${root}/`) ? `~${path.slice(root.length)}` : path
 }
+
+// A vendor skin over Android, as its own prop names it: Samsung's One UI from `ro.build.version.oneui`
+// ("60100" is 6.1, "80500" is 8.5). Another skin is one more entry in SKINS.
+export type Skin = { name: string; version: string }
+
+export const SKIN_PROPS = ['ro.build.version.oneui'] as const
+
+const SKINS: { prop: (typeof SKIN_PROPS)[number]; name: string; version: (value: string) => string | undefined }[] = [
+  {
+    prop: 'ro.build.version.oneui',
+    name: 'One UI',
+    version: value => {
+      const n = Number(value)
+      if (!Number.isInteger(n) || n < 10000) return undefined
+      return `${Math.floor(n / 10000)}.${Math.floor((n % 10000) / 100)}`
+    },
+  },
+]
+
+export function skinOf(props: Readonly<Record<string, string | undefined>>): Skin | undefined {
+  for (const skin of SKINS) {
+    const value = props[skin.prop]?.trim()
+    const version = value ? skin.version(value) : undefined
+    if (version) return { name: skin.name, version }
+  }
+  return undefined
+}
+
+// The hardware a device reports, read once when the Spec block is first unfolded
+export type Cluster = { count: number; minKhz?: number; maxKhz?: number }
+export type BatteryHealth = 'good' | 'overheat' | 'dead' | 'overVoltage' | 'failure' | 'cold' | 'unknown'
+export type Specs = {
+  soc?: string
+  cores?: number
+  clusters: Cluster[]
+  governors: string[]
+  abis: string[]
+  gpu?: string
+  gles?: string
+  memTotalKb?: number
+  memAvailableKb?: number
+  swapTotalKb?: number
+  swapFreeKb?: number
+  width?: number
+  height?: number
+  dpi?: number
+  hz?: number
+  fingerprint?: string
+  patch?: string
+  kernel?: string
+  bootloader?: string
+  buildType?: string
+  health?: BatteryHealth
+  tempC?: number
+  voltageMv?: number
+  technology?: string
+  cycles?: number
+}
+
+// `getprop` with no name: "[ro.soc.model]: [SM8550]" per line
+export function parseProps(out: string): Record<string, string> {
+  const props: Record<string, string> = {}
+  for (const line of out.split(/\r?\n/)) {
+    const m = /^\[([^\]]+)\]: \[(.*)\]$/.exec(line.trim())
+    if (m?.[1] && m[2] !== undefined && m[2] !== '') props[m[1]] = m[2]
+  }
+  return props
+}
+
+// `grep -H . <files>`: "path:value" per line, a file of several lines giving several
+export function parseGrep(out: string): [string, string][] {
+  const pairs: [string, string][] = []
+  for (const line of out.split(/\r?\n/)) {
+    const i = line.indexOf(':')
+    if (i > 0) pairs.push([line.slice(0, i), line.slice(i + 1).trim()])
+  }
+  return pairs
+}
+
+// The files SYSFS_FILES names, read in one `grep -H .` on the device; the globs expand in the device's shell
+export const SYSFS_FILES = [
+  '/sys/devices/system/cpu/possible',
+  '/sys/devices/system/cpu/cpu[0-9]*/cpufreq/cpuinfo_min_freq',
+  '/sys/devices/system/cpu/cpu[0-9]*/cpufreq/cpuinfo_max_freq',
+  '/sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_governor',
+  '/proc/meminfo',
+  '/proc/sys/kernel/osrelease',
+  '/sys/class/power_supply/battery/cycle_count',
+] as const
+
+// "0-7" or "0-3,4-7" or "0,2-3": how many CPUs
+export function countCpus(range: string): number | undefined {
+  let n = 0
+  for (const part of range.trim().split(',')) {
+    const m = /^(\d+)(?:-(\d+))?$/.exec(part.trim())
+    if (!m) return undefined
+    n += m[2] === undefined ? 1 : Number(m[2]) - Number(m[1]) + 1
+  }
+  return n > 0 ? n : undefined
+}
+
+const positive = (value: string | undefined) => {
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0 ? n : undefined
+}
+
+// The cores, their clusters (cores of the same frequency range, slowest first), the governors, the memory, the kernel and the battery's cycles
+export function sysfsSpecs(pairs: readonly [string, string][]): Pick<Specs, 'cores' | 'clusters' | 'governors' | 'memTotalKb' | 'memAvailableKb' | 'swapTotalKb' | 'swapFreeKb' | 'kernel' | 'cycles'> {
+  const cpus = new Map<number, { min?: number; max?: number }>()
+  const governors: string[] = []
+  const mem: Record<string, number> = {}
+  let possible: number | undefined
+  let kernel: string | undefined
+  let cycles: number | undefined
+  for (const [path, value] of pairs) {
+    if (path === '/sys/devices/system/cpu/possible') possible = countCpus(value)
+    else if (path === '/proc/sys/kernel/osrelease') kernel = value || undefined
+    else if (path === '/sys/class/power_supply/battery/cycle_count') cycles = Number.isInteger(Number(value)) && Number(value) >= 0 ? Number(value) : undefined
+    else if (path === '/proc/meminfo') {
+      const m = /^(\w+):\s*(\d+)\s*kB/.exec(value)
+      if (m?.[1]) mem[m[1]] = Number(m[2])
+    } else {
+      const m = /^\/sys\/devices\/system\/cpu\/cpu(\d+)\/cpufreq\/(cpuinfo_min_freq|cpuinfo_max_freq|scaling_governor)$/.exec(path)
+      if (!m) continue
+      const cpu = Number(m[1])
+      const entry = cpus.get(cpu) ?? {}
+      if (m[2] === 'cpuinfo_min_freq') entry.min = positive(value)
+      else if (m[2] === 'cpuinfo_max_freq') entry.max = positive(value)
+      else if (value && !governors.includes(value)) governors.push(value)
+      cpus.set(cpu, entry)
+    }
+  }
+  const clusters: Cluster[] = []
+  for (const cpu of [...cpus.keys()].sort((a, b) => a - b)) {
+    const { min, max } = cpus.get(cpu)!
+    if (max === undefined) continue
+    const same = clusters.find(c => c.maxKhz === max && c.minKhz === min)
+    if (same) same.count++
+    else clusters.push({ count: 1, minKhz: min, maxKhz: max })
+  }
+  clusters.sort((a, b) => (a.maxKhz ?? 0) - (b.maxKhz ?? 0))
+  return {
+    cores: possible ?? (cpus.size > 0 ? cpus.size : undefined),
+    clusters,
+    governors,
+    memTotalKb: mem.MemTotal,
+    memAvailableKb: mem.MemAvailable,
+    swapTotalKb: mem.SwapTotal || undefined,
+    swapFreeKb: mem.SwapTotal ? mem.SwapFree : undefined,
+    kernel,
+    cycles,
+  }
+}
+
+// The SoC, the ABIs and the build from the props: `ro.soc.*` (Android 12 and later), else the board, else the hardware
+export function propSpecs(props: Readonly<Record<string, string>>): Pick<Specs, 'soc' | 'abis' | 'dpi' | 'fingerprint' | 'patch' | 'bootloader' | 'buildType'> {
+  const model = props['ro.soc.model']
+  const maker = props['ro.soc.manufacturer']
+  const platform = props['ro.board.platform']
+  const soc =
+    model ? [maker, model].filter(Boolean).join(' ') + (platform && platform.toLowerCase() !== model.toLowerCase() ? ` (${platform})` : '')
+    : (platform ?? props['ro.hardware'])
+  const abis = (props['ro.product.cpu.abilist'] ?? props['ro.product.cpu.abi'] ?? '').split(',').map(x => x.trim()).filter(Boolean)
+  const bootloader = props['ro.bootloader'] ?? props['ro.boot.bootloader']
+  return {
+    soc,
+    abis,
+    dpi: positive(props['ro.sf.lcd_density']),
+    fingerprint: props['ro.build.fingerprint'],
+    patch: props['ro.build.version.security_patch'],
+    bootloader: bootloader && bootloader !== 'unknown' ? bootloader : undefined,
+    buildType: props['ro.build.type'],
+  }
+}
+
+// `dumpsys SurfaceFlinger`: "GLES: Qualcomm, Adreno (TM) 740, OpenGL ES 3.2 V@0676.32 ..."
+export function parseGles(out: string): { gpu?: string; gles?: string } {
+  const m = /^\s*GLES:\s*([^,\n]+),\s*([^,\n]+),\s*(OpenGL ES[^\sV]*\s*[\d.]+)?/m.exec(out)
+  if (!m) return {}
+  const vendor = m[1]!.trim()
+  const renderer = m[2]!.trim()
+  return { gpu: renderer.toLowerCase().includes(vendor.toLowerCase()) ? renderer : `${vendor} ${renderer}`, gles: m[3]?.trim() }
+}
+
+// The highest refresh rate among the display's modes in `dumpsys display` ("fps=120.0"); else SurfaceFlinger's "refresh-rate : 60.000 fps"
+export function parseRefreshRate(display: string, surfaceFlinger = ''): number | undefined {
+  let best = 0
+  for (const m of display.matchAll(/\bfps=(\d+(?:\.\d+)?)/g)) best = Math.max(best, Number(m[1]))
+  if (best <= 0) best = Number(/refresh-rate\s*:\s*(\d+(?:\.\d+)?)/.exec(surfaceFlinger)?.[1] ?? 0)
+  return best > 0 ? Math.round(best) : undefined
+}
+
+// `wm size`: "Physical size: 1080x2400" (an "Override size:" line may follow)
+export function parseWmSize(out: string): { width?: number; height?: number } {
+  const m = /Physical size:\s*(\d+)x(\d+)/.exec(out)
+  return m ? { width: Number(m[1]), height: Number(m[2]) } : {}
+}
+
+const HEALTH: Record<string, BatteryHealth> = { '2': 'good', '3': 'overheat', '4': 'dead', '5': 'overVoltage', '6': 'failure', '7': 'cold' }
+
+// `dumpsys battery`: "  health: 2", "  temperature: 285" (tenths of a degree), "  voltage: 4123" (mV), "  technology: Li-ion"
+export function parseBatteryDetail(out: string): Pick<Specs, 'health' | 'tempC' | 'voltageMv' | 'technology'> {
+  const field = (name: string) => new RegExp(`^\\s*${name}:\\s*(.+)$`, 'm').exec(out)?.[1]?.trim()
+  const health = field('health')
+  const temp = Number(field('temperature'))
+  const voltage = Number(field('voltage'))
+  const technology = field('technology')
+  return {
+    health: health === undefined ? undefined : (HEALTH[health] ?? 'unknown'),
+    tempC: Number.isFinite(temp) && field('temperature') !== undefined ? temp / 10 : undefined,
+    // Some devices report volts, not millivolts
+    voltageMv: Number.isFinite(voltage) && voltage > 0 ? (voltage < 100 ? voltage * 1000 : voltage) : undefined,
+    technology: technology && technology !== 'Unknown' ? technology : undefined,
+  }
+}
+
+// "1.96 GHz" from kHz
+export function formatGhz(khz: number): string {
+  return `${(khz / 1_000_000).toFixed(2)} GHz`
+}
+
+// "4 × 0.31–1.96 GHz", or "4 × 1.96 GHz" without a minimum
+export function formatCluster(c: Cluster): string {
+  if (c.maxKhz === undefined) return `${c.count}`
+  const range = c.minKhz !== undefined ? `${(c.minKhz / 1_000_000).toFixed(2)}–${formatGhz(c.maxKhz)}` : formatGhz(c.maxKhz)
+  return `${c.count} × ${range}`
+}
+
+// How many terminal cells a string takes: a Hangul or CJK character takes two
+export function cellWidth(text: string): number {
+  let n = 0
+  for (const ch of text) n += /[ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦]/.test(ch) ? 2 : 1
+  return n
+}
+
+export function padCells(text: string, width: number): string {
+  return text + ' '.repeat(Math.max(0, width - cellWidth(text)))
+}
