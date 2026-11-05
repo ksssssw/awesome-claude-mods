@@ -30,7 +30,7 @@
       "name": "android-logcat",
       "displayName": "Android Logcat",
       "description": "A pane that follows the connected Android device's logcat for the app of the current repo, colored by level like Android Studio, with a level floor and a text filter; /logcat turns it on and off.",
-      "version": "0.1.1",
+      "version": "0.2.0",
       "author": {
         "name": "ksssssw",
         "url": "https://github.com/ksssssw"

@@ -1,8 +1,8 @@
 // Everything that talks to adb or walks the repo: thin calls on `$`, the parsing in model.ts
 import type { EngineInterface } from 'claude-code'
 
-import { applicationIdFrom, parseDevices, parsePackageList, pickPackage } from './model'
-import type { Device, Pick } from './model'
+import { applicationIdsFrom, parseDevices, parsePackageList, parseResumedPackage, parseVersionCatalog } from './model'
+import type { Device, InstalledPackage } from './model'
 
 const RUN_TIMEOUT = 10_000
 
@@ -34,29 +34,62 @@ export async function listDevices($: EngineInterface, adb: string): Promise<Devi
   return out === undefined ? [] : parseDevices(out)
 }
 
-export async function resolvePackage($: EngineInterface, adb: string, serial: string, base: string): Promise<Pick | undefined> {
-  const out = await runs($, [adb, '-s', serial, 'shell', 'cmd', 'package', 'list', 'packages', '-U', base])
-  if (out === undefined) return undefined
-  return pickPackage(parsePackageList(out), base)
-}
-
 export async function pidOf($: EngineInterface, adb: string, serial: string, pkg: string): Promise<number | undefined> {
   const out = await runs($, [adb, '-s', serial, 'shell', 'pidof', '-s', pkg])
   const pid = Number(out?.trim())
   return Number.isInteger(pid) && pid > 0 ? pid : undefined
 }
 
-const SKIPPED = new Set(['build', 'node_modules', '.git', '.gradle', '.idea', 'buildSrc'])
-const MAX_DEPTH = 4
+// Every package installed on the device with its uid; undefined when adb could not say
+export async function listInstalled($: EngineInterface, adb: string, serial: string): Promise<InstalledPackage[] | undefined> {
+  const out = await runs($, [adb, '-s', serial, 'shell', 'cmd', 'package', 'list', 'packages', '-U'])
+  return out === undefined ? undefined : parsePackageList(out)
+}
 
-// The first applicationId in a build.gradle(.kts) under `root`, `app/` looked at first
-export async function detectApplicationId($: EngineInterface, root: string): Promise<string | undefined> {
+// The package whose activity is resumed on screen, when the device says
+export async function foregroundPackage($: EngineInterface, adb: string, serial: string): Promise<string | undefined> {
+  const out = await runs($, [adb, '-s', serial, 'shell', 'dumpsys activity activities | grep ResumedActivity'])
+  return out === undefined ? undefined : parseResumedPackage(out)
+}
+
+// Folders no build file of an app sits in: outputs, tooling, and a module's sources
+const SKIPPED = new Set(['build', 'node_modules', '.git', '.gradle', '.idea', 'buildSrc', 'build-logic', 'src', 'out', 'gradle'])
+// Deep enough for an Android project kept a folder or two under the repo root (`workspace/app/…/app`)
+const MAX_DEPTH = 6
+// At most this many folders are listed, so a large repo does not stall the start
+const MAX_DIRS = 3000
+
+// Every applicationId the build files under `root` set, in the order found: breadth first, `app/` before
+// its siblings, each file's version catalog references resolved through the nearest `gradle/libs.versions.toml`
+export async function detectApplicationIds($: EngineInterface, root: string): Promise<string[]> {
+  const ids: string[] = []
+  const catalogs = new Map<string, Record<string, string>>()
+  const catalogFor = async (dir: string): Promise<Record<string, string>> => {
+    // From the build file's folder up to the root, the first folder that holds the catalog
+    for (let at = dir; at.length >= root.length; at = at.slice(0, Math.max(0, at.lastIndexOf('/')))) {
+      const cached = catalogs.get(at)
+      if (cached) return cached
+      try {
+        const toml = await $.fs.read(`${at}/gradle/libs.versions.toml`)
+        const parsed = parseVersionCatalog(typeof toml === 'string' ? toml : '')
+        catalogs.set(at, parsed)
+        return parsed
+      } catch {
+        // no catalog here: look a folder up
+      }
+      if (at === root || !at.includes('/')) break
+    }
+    return {}
+  }
+
   const queue: { dir: string; depth: number }[] = [{ dir: root, depth: 0 }]
-  while (queue.length > 0) {
+  let listed = 0
+  while (queue.length > 0 && listed < MAX_DIRS) {
     const { dir, depth } = queue.shift()!
     let entries
     try {
       entries = await $.fs.list(dir)
+      listed++
     } catch {
       continue
     }
@@ -64,8 +97,10 @@ export async function detectApplicationId($: EngineInterface, root: string): Pro
     for (const entry of sorted) {
       if (entry.kind === 'file' && (entry.name === 'build.gradle' || entry.name === 'build.gradle.kts')) {
         try {
-          const id = applicationIdFrom(await $.fs.read(`${dir}/${entry.name}`))
-          if (id) return id
+          const gradle = await $.fs.read(`${dir}/${entry.name}`)
+          const text = typeof gradle === 'string' ? gradle : ''
+          const catalog = /libs\.versions\./.test(text) ? await catalogFor(dir) : {}
+          for (const id of applicationIdsFrom(text, catalog)) if (!ids.includes(id)) ids.push(id)
         } catch {
           // unreadable: look on
         }
@@ -78,5 +113,5 @@ export async function detectApplicationId($: EngineInterface, root: string): Pro
       }
     }
   }
-  return undefined
+  return ids
 }

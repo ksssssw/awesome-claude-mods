@@ -1,6 +1,6 @@
 {
   "name": "android-logcat",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "A pane that follows the connected Android device's logcat for the app of the current repo, colored by level like Android Studio, with a level floor and a text filter; /logcat turns it on and off.",
   "author": { "name": "ksssssw", "url": "https://github.com/ksssssw" },
   "homepage": "https://github.com/ksssssw/awesome-claude-mods/tree/main/mods/android-logcat",
@@ -11,7 +11,7 @@
     "package": {
       "type": "string",
       "title": "Package",
-      "description": "The app to follow. Empty: the applicationId of the build.gradle in the working directory.",
+      "description": "The app to follow. Empty: the package remembered for the repo, else the repo's apps installed on the device.",
       "default": ""
     },
     "serial": {
