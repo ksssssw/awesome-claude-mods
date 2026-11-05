@@ -11,7 +11,7 @@
       "name": "step-tracker",
       "displayName": "Step Tracker",
       "description": "A framed band above the prompt that shows Claude's plan steps, what it is doing right now, the calls it just made, a live activity graph, background agents and shells, and the branch you are on.",
-      "version": "0.7.1",
+      "version": "0.8.0",
       "author": {
         "name": "ksssssw",
         "url": "https://github.com/ksssssw"

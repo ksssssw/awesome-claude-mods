@@ -23,7 +23,9 @@ import {
   windowOffset,
 } from '../hooks/model'
 import { setLanguage } from '../hooks/i18n'
-import { MASCOT_WIDTH, activityCells, bucketCalls, mascotColumn, timelineCells } from '../hooks/timeline'
+import { MASCOT_ROWS, MASCOT_WIDTH, SCENES, drawMascot, pickScene } from '../hooks/mascot'
+import type { Grid, Mood } from '../hooks/timeline'
+import { activityCells, activityGrid, bucketCalls, mascotColumn, timelineCells } from '../hooks/timeline'
 
 const todo = (content: string, status: 'pending' | 'in_progress' | 'completed') => ({ content, status })
 
@@ -196,6 +198,64 @@ test('the activity graph buckets calls by two seconds and the mascot paces the w
   expect(Math.max(...columns)).toBe(30 - MASCOT_WIDTH)
   // 20 columns x 8 rows x 3 u32 = 1920 bytes = 2560 base64 characters
   expect(activityCells(log, 20, 8, 10_000, 3, 'thinking')).toHaveLength(2560)
+})
+
+test('the scene option names a scene, and random draws one for the session', async () => {
+  expect(pickScene('fish')).toBe('fish')
+  expect(pickScene('random', () => 0)).toBe('walk')
+  expect(pickScene('random', () => 0.999)).toBe('nap')
+  expect(pickScene(undefined, () => 0.5)).toBe(SCENES[Math.floor(0.5 * SCENES.length)])
+  expect(pickScene('unicorn', () => 0.3)).toBe(SCENES[Math.floor(0.3 * SCENES.length)])
+})
+
+// The glyphs of the mascot's rows, as text, for a scene at a frame and a pace
+const draw = (scene: (typeof SCENES)[number], mood: Mood, frame: number, pace: number, columns = 30): string[] => {
+  const grid: Grid = Array.from({ length: MASCOT_ROWS }, () => Array.from({ length: columns }, () => [0x20, 0] as [number, number]))
+  drawMascot(grid, 0, columns, frame, mood, scene, pace)
+  return grid.map(row => row.map(([code]) => String.fromCodePoint(code)).join(''))
+}
+
+test('every scene draws the crab in each mood inside its four rows, each mood its own way', async () => {
+  for (const scene of SCENES) {
+    for (const mood of ['idle', 'working', 'thinking'] as const) {
+      for (const pace of [0, 7, 13, 40]) {
+        const rows = draw(scene, mood, 3, pace)
+        expect(rows).toHaveLength(MASCOT_ROWS)
+        expect(rows.join('\n')).toContain('█████')
+      }
+    }
+    // The working frames differ from the thinking frames, and those from the idle ones
+    const at = (mood: Mood) => Array.from({ length: 48 }, (_, k) => draw(scene, mood, k, k).join('\n')).join('\n')
+    expect(at('working')).not.toBe(at('thinking'))
+    expect(at('thinking')).not.toBe(at('idle'))
+  }
+})
+
+test('each scene has its props: a ball, a line with a float, a hop with dust, a z while napping', async () => {
+  // The ball rolls ahead of the walking crab, and rests beside it while it thinks
+  expect(draw('ball', 'working', 0, 0)[3]).toMatch(/[◐◓◑◒]/)
+  expect(draw('ball', 'thinking', 0, 0)[3]).toContain('●')
+  expect(draw('ball', 'thinking', 4, 0)[2]).toContain('∘')
+  // The crab sits at the left end; the line reaches out while it works and is reeled in when idle
+  const fishing = draw('fish', 'working', 3, 10)
+  expect(fishing[1]).toMatch(/^ ▐▛███▜▌ ╌+╮/)
+  expect(fishing[3]).toMatch(/◦/)
+  expect(fishing[3]).toContain('≈')
+  expect(draw('fish', 'thinking', 4, 10)[3]).toContain('•')
+  expect(draw('fish', 'idle', 0, 10).join('')).not.toMatch(/[╌◦]/)
+  // The hop borrows the thought row and lands in dust
+  expect(draw('jump', 'working', 0, 6)[0]).toContain('███')
+  expect(draw('jump', 'working', 0, 8)[3]).toContain('▁')
+  expect(draw('jump', 'working', 0, 0)[0]!.trim()).toBe('')
+  // Napping: eyes shut and a z, then a Z above it
+  expect(draw('nap', 'idle', 0, 0)[1]).toContain('▐█████▌ z')
+  expect(draw('nap', 'idle', 16, 0)[0]).toContain('Z')
+  expect(draw('nap', 'working', 3, 2)[1]).toContain('▐▛███▜▌')
+  // The walk stops where it was while the model thinks: the pace does not move, so nor does the crab
+  expect(draw('walk', 'thinking', 9, 13)[1]).toBe(draw('walk', 'thinking', 10, 13)[1])
+  expect(draw('walk', 'working', 9, 13)[1]).not.toBe(draw('walk', 'working', 10, 15)[1])
+  // The graph above keeps its rows whatever the scene
+  expect(activityGrid([], 20, 8, 10_000, 3, 'working', 'jump', 6)).toHaveLength(8)
 })
 
 test('a notification names the tasks it ended, and the line counts what still runs', async () => {

@@ -52,7 +52,7 @@ Without a plan, the calls Claude just finished rise from the bottom and fade as 
 - **Steps**: `✓` done, a spinner on the one in progress (`▸` once the turn ends) with its time, `○` still to do. The last three calls sit under the active step.
 - **Timeline** (92 columns and wider, with a plan): one bar per step, the running bar growing in real time.
 - **Recent calls** (no plan): newest at the bottom, older ones fading as they rise; one that just finished is lit green for a moment, a failed one is a red `✗`.
-- **Activity graph** (92 columns and wider, no plan): calls per two seconds, colored by the kind most called (read blue, edit orange, run green, search purple, skill yellow). Under it, Claude walks while it works, thinks with `·∙•` over its head while the model thinks, and stands still and blinks when idle.
+- **Activity graph** (92 columns and wider, no plan): calls per two seconds, colored by the kind most called (read blue, edit orange, run green, search purple, skill yellow). Under it, Claude plays one of five scenes, drawn at random when the session starts, so each open session has its own: a **walk** (paces while it works, stops with `·∙•` over its head while the model thinks, stands and blinks when idle), **ball** (rolls a ball ahead of it; the ball bounces beside it while it thinks), **fish** (sits at the left end over the water, casting the line out and back; the float bobs while it thinks; the line is reeled in when idle), **jump** (hops on the spot, with a puff of dust on landing) or **nap** (walks and thinks like the first, and lies down with a `z` when idle). `/clear` keeps the session's scene; the `scene` option pins one.
 - **Activity line**: what is happening now, with a glow that sweeps across it: waiting for the model, thinking, writing the answer, writing a change, reading or editing a file, running a command, and so on. In plan mode it reads as planning and the frame turns teal.
 - **This turn**: calls by kind and the files changed.
 - **Background work**: each running subagent (`◆`) with its task, current call and call count, and each background shell (`$`) started with `run_in_background` or sent there with Ctrl+B. The band stays up after the turn while any of them runs.
@@ -68,6 +68,7 @@ Without a plan, the calls Claude just finished rise from the bottom and fade as 
 | Option | Values | Default |
 | --- | --- | --- |
 | `language` | `en` English, `ko` Korean | `en` |
+| `scene` | `random`, `walk`, `ball`, `fish`, `jump`, `nap` | `random` |
 
 Set it with `/plugin configure step-tracker@awesome-claude-mods` in Claude Code, or from a shell:
 
