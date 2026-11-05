@@ -13,8 +13,8 @@ It costs **zero tokens while off**. While on, one tool definition (`logcat_read`
 ## What it shows
 
 ```
-logcat com.example.app.debug  SM F966N · uid 10234  live
-Level [D]  (p) Pause  (c) Clear  (u) Older  (d) Newer  (f) Follow
+logcat com.example.app.debug (1 of 2)  SM F966N · uid 10234  live
+App [com.example.app.debug]  Level [Verbose]  (p) Pause  (c) Clear  (u) Older  (d) Newer  (f) Follow  (w) No wrap
 Filter [net                                                      ]
 14:03:21.002  D/Net: GET /api/items
 14:03:21.004  W/Net: slow response
@@ -23,27 +23,33 @@ Filter [net                                                      ]
 
 The three rows at the top stay put; only the lines under them scroll.
 
-- **Header**: the package being followed (or `all processes`), the device model, the uid or pid the filter uses, and the state: `live`, `paused`, `starting`, `reconnecting`, `no device connected`, `<package> is not installed`, `adb not found`.
-- **Level**: the lowest level shown: `All`, `D`, `I`, `W` or `E`. Default `D`.
+- **Header**: the package being followed (or `all processes`), the device model, the uid or pid the filter uses, and the state: `live`, `paused`, `starting`, `reconnecting`, `no device connected`, `<package> is not installed`, `none of the repo's app ids is installed`, `adb not found`.
+- **App**: shown when there is something to switch to: two or more of the repo's apps on the device, or a followed package that is none of them. It lists the repo's installed apps and `all processes`; a pick switches at once and is remembered for the repo.
+- **Level**: as in Android Studio, the level picked and everything above it: `Verbose` (every line), `Debug`, `Info`, `Warn`, `Error`. Every `/logcat` starts at `Verbose`.
 - **Filter**: a case-insensitive substring of the tag or the message, applied as you type.
-- **Lines**: `HH:MM:SS.mmm  L/Tag: message`, newest at the bottom, cut at the pane's edge. Colors follow Android Studio's Darcula scheme: `V` grey, `D` blue, `I` green, `W` yellow, `E` red, `F` red and bold. Warnings and above color the whole line; verbose, debug and info color only `L/Tag:`.
+- **Lines**: `HH:MM:SS.mmm  L/Tag: message`, newest at the bottom. A line wider than the pane continues on the rows under it, indented under the time; `w` (No wrap) cuts lines at the edge instead, and the choice is remembered across sessions. Colors follow Android Studio's Darcula scheme: `V` grey, `D` blue, `I` green, `W` yellow, `E` red, `F` red and bold. Warnings and above color the whole line; verbose, debug and info color only `L/Tag:`.
 - **Status line**: `logcat <package> · E 3 W 12`, the errors and warnings since the capture started or was last cleared.
 
 ## Interaction
 
 - `/logcat` turns the pane on; `/logcat` again, `/logcat off` or closing the pane (Ctrl+X X) turns it off and ends adb.
-- `/logcat <package>` follows that package instead of the repo's app, for this session.
+- `/logcat <package>` follows that package instead of the repo's app and remembers it for the repo (keyed by the git root), so later `/logcat`s in any session follow it too. `/logcat auto` forgets it and goes back to the repo's own apps. The command's hint lists the repo's apps installed on the device.
 - `/logcat clear` empties the lines and the counts.
 - With the pane focused (Ctrl+X Tab), `p` pauses the drawing (lines keep arriving) and `c` clears. Tab walks the level picker, the buttons and the filter.
 - **Scrolling back**: the mouse wheel over the pane, PageUp/PageDown and Home/End while the pane is focused, or `u` (older page), `d` (newer page) and `f` (back to the newest). A click on the lines also gives them the arrow keys. While scrolled up the last row says how many newer lines wait below and the view holds still; `f` or End follows the newest again. The pane keeps the last 300 matching lines to scroll through.
+- **Copying**: drag over the lines to select whole lines; letting go copies them, untruncated, as `HH:MM:SS.mmm  L/Tag: message` and says how many. The view holds still while you select and follows again after the copy. Dragging past the top or the bottom edge scrolls that way. Or click a line, extend with Shift+Up/Down, and press `y`. The terminal's own selection does not reach into the pane, since the lines region takes the mouse.
 - Claude can call `logcat_read` (`level`, `filter`, `lines`: up to 500 of the newest matching lines) while the pane is on. Ask it to look at the errors, or at a tag.
 
 ## Which package is "mine"
 
-1. The `package` option, when set.
-2. Else the `applicationId` of the first `build.gradle` or `build.gradle.kts` under the working directory (`app/` first, four levels deep, `build/` and the like skipped).
-3. That id is matched against the packages installed on the device: the id itself, else its first flavor (`com.example.app.debug`). The header says `(1 of N)` when several match.
-4. With no id at all, the pane shows every process.
+1. A package named with `/logcat <package>` or picked in the pane, in this session.
+2. Else the package remembered for the repo (the git root, or the working directory outside git).
+3. Else the `package` option, when set.
+4. Else the repo's own apps: every `applicationId` in the `build.gradle` and `build.gradle.kts` files under the git root, six levels deep (`app/` first; `build/`, `src/`, `buildSrc/` and the like skipped), so a project kept in a subfolder such as `workspace/` is found. Version catalog references (`applicationId = libs.versions.appId.get()`) are read from the nearest `gradle/libs.versions.toml`.
+5. Those ids are matched against the packages installed on the device, each id itself and its flavors (`com.example.app.debug`); ids not on the device (sample apps, say) drop out. With several left, the app on screen wins, else the first found. The header says `(1 of N)`.
+6. With no id at all, the pane shows every process. With ids but none installed, the header says so and it retries.
+
+A remembered or named package that is not on the device is shown as not installed and retried; the pane does not quietly switch to another app, but the App picker offers the repo's installed ones. Remembered packages live in the mod's own store under your Claude Code configuration folder, never in the repo.
 
 The capture filters by the app's uid (`adb logcat --uid`), so it follows the app across restarts. Where the uid cannot be read, it follows the pid and checks it every two seconds.
 
@@ -51,7 +57,7 @@ The capture filters by the app's uid (`adb logcat --uid`), so it follows the app
 
 | Option | Values | Default |
 | --- | --- | --- |
-| `package` | A package name; empty for the repo's own | empty |
+| `package` | A package name; empty for the repo's own. A package remembered for the repo comes first | empty |
 | `serial` | A device serial from `adb devices`; empty for the first device | empty |
 | `rows` | Pane height above the prompt (narrow terminals) | `20` |
 | `bufferLines` | Lines kept for the pane and `logcat_read` | `2000` |
@@ -75,7 +81,8 @@ Restart Claude Code to apply them.
 
 ## Known limitations
 
-- Scrolling back reaches the last 300 matching lines; older ones are only in `logcat_read` (up to `bufferLines`).
+- Scrolling back reaches the last 300 matching lines; older ones are only in `logcat_read` (up to `bufferLines`). Scrolling moves by lines, so under wrap a page can move more or fewer rows than the pane holds.
+- Selection is by whole lines, not characters. No horizontal scrolling: long lines wrap instead.
 - One device at a time. With several connected and no `serial`, the first one wins.
 - `--uid` filtering needs Android 8 or newer; older devices fall back to the pid.
 - The desktop app draws the lines in a monospaced face with the level as a colored badge, and the buttons without hotkey badges.
@@ -85,7 +92,7 @@ Restart Claude Code to apply them.
 
 ```bash
 claude plugin validate mods/android-logcat --profile directory
-claude plugin test mods/android-logcat        # 21 tests
+claude plugin test mods/android-logcat        # 32 tests
 claude --plugin-dir mods/android-logcat       # load this folder directly, reloading on save
 ```
 

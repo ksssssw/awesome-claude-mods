@@ -2,6 +2,15 @@ import { expect, test } from 'claude-code/testing'
 
 import {
   applicationIdFrom,
+  applicationIdsFrom,
+  chooseCandidate,
+  cutCells,
+  installedCandidates,
+  parseResumedPackage,
+  parseVersionCatalog,
+  textWidth,
+  windowOf,
+  wrapMessage,
   formatLine,
   isPackageName,
   logcatArgv,
@@ -121,4 +130,49 @@ test('a package name holds letters, digits, dots and underscores alone', async (
   expect(isPackageName('com.x; reboot')).toBe(false)
   expect(isPackageName('com.x rm')).toBe(false)
   expect(isPackageName('')).toBe(false)
+})
+
+test('build files name their app ids as literals or version catalog references', async () => {
+  const catalog = parseVersionCatalog('# ids\n[versions]\nandroidApplicationId = "com.real.store" # main\nhub-application-id = \'com.real.hub\'\n[libraries]\nx = "not.a.version"\n')
+  expect(catalog).toEqual({ androidapplicationid: 'com.real.store', hubapplicationid: 'com.real.hub' })
+  const kts = [
+    'defaultConfig { applicationId = libs.versions.androidApplicationId.get() }',
+    'getByName("hub") { applicationId = libs.versions.hub.application.id.get() }',
+    'getByName("same") { applicationId = libs.versions.androidApplicationId.get() }',
+    'getByName("lost") { applicationId = libs.versions.missing.get() }',
+    'getByName("lit") { applicationId = "com.lit"; applicationIdSuffix = ".dev" }',
+  ].join('\n')
+  expect(applicationIdsFrom(kts, catalog)).toEqual(['com.real.store', 'com.real.hub', 'com.lit'])
+  expect(applicationIdsFrom('applicationId libs.versions.androidApplicationId\n', catalog)).toEqual(['com.real.store'])
+  expect(applicationIdsFrom('applicationId "com.groovy"', {})).toEqual(['com.groovy'])
+})
+
+test('the repo apps on the device keep the order found, flavors after their base, the one on screen chosen', async () => {
+  const installed = parsePackageList('package:com.b uid:2\npackage:com.a.debug uid:3\npackage:com.a uid:1\npackage:com.z uid:9\n')
+  const found = installedCandidates(installed, ['com.sample', 'com.a', 'com.b', 'com.a.debug'])
+  expect(found.map(p => p.name)).toEqual(['com.a', 'com.a.debug', 'com.b'])
+  expect(chooseCandidate(found, 'com.b')?.name).toBe('com.b')
+  expect(chooseCandidate(found, 'com.z')?.name).toBe('com.a')
+  expect(chooseCandidate([], 'com.z')).toBeUndefined()
+})
+
+test('the resumed activity names the package on screen', async () => {
+  expect(parseResumedPackage('  topResumedActivity=ActivityRecord{8f2 u0 com.x.app/.ui.Main t31}\n')).toBe('com.x.app')
+  expect(parseResumedPackage('    mResumedActivity: ActivityRecord{1 u0 com.y/com.y.Splash t2}')).toBe('com.y')
+  expect(parseResumedPackage('nothing here')).toBeUndefined()
+})
+
+test('wrapping counts wide characters as two cells and indents the later rows under the time', async () => {
+  expect(textWidth('a한b')).toBe(4)
+  expect(cutCells('가나다라', 4, 4)).toEqual(['가나', '다라'])
+  expect(cutCells('', 4, 4)).toEqual([''])
+  const entry = parseLine('11-02 14:03:21.123  1234  5678 D Tag     : 0123456789abcdefghij')!
+  // `14:03:21.123  D/Tag: ` is 21 cells: 9 left on the first row of 30, 16 on each later one
+  expect(wrapMessage(entry, 30)).toEqual(['012345678', '9abcdefghij'])
+})
+
+test('the window fills its rows back from the offset, cutting a tall first line at the top', async () => {
+  expect(windowOf([1, 1, 1, 1], 0, 2)).toEqual({ start: 2, end: 4, cut: 0 })
+  expect(windowOf([1, 3, 1], 0, 3)).toEqual({ start: 1, end: 3, cut: 1 })
+  expect(windowOf([2, 2], 1, 5)).toEqual({ start: 0, end: 1, cut: 0 })
 })

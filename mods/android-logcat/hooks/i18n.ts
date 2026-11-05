@@ -6,6 +6,7 @@ export type Strings = {
   argumentHint: string
   paneTitle: string
   turnedOn: (pkg: string) => string
+  turnedOnAuto: string
   turnedOff: string
   cleared: string
   alreadyOff: string
@@ -13,6 +14,7 @@ export type Strings = {
   badPackage: (arg: string) => string
   error: (reason: string) => string
   level: string
+  app: string
   filter: string
   filterPlaceholder: string
   pause: string
@@ -21,6 +23,10 @@ export type Strings = {
   older: string
   newer: string
   follow: string
+  wrap: string
+  unwrap: string
+  copied: (count: number) => string
+  copyFailed: string
   newerLines: string
   off: string
   starting: string
@@ -30,6 +36,7 @@ export type Strings = {
   noAdb: string
   noDevice: string
   notInstalled: (pkg: string) => string
+  noneInstalled: (count: number) => string
   allProcesses: string
   oneOf: (chosen: string, count: number) => string
   empty: string
@@ -39,9 +46,10 @@ export type Strings = {
 
 const EN: Strings = {
   commandDescription: 'Show the connected Android device\u2019s logcat in a pane; again to hide',
-  argumentHint: '[off | clear | <package>]',
+  argumentHint: '[off | clear | auto | <package>]',
   paneTitle: 'logcat',
   turnedOn: pkg => `logcat on: ${pkg}`,
+  turnedOnAuto: 'logcat on: the repo\u2019s app on the device',
   turnedOff: 'logcat off',
   cleared: 'logcat cleared',
   alreadyOff: 'logcat is already off',
@@ -49,6 +57,7 @@ const EN: Strings = {
   badPackage: arg => `not a package name: ${arg}`,
   error: reason => `error: ${reason}`,
   level: 'Level',
+  app: 'App',
   filter: 'Filter',
   filterPlaceholder: 'tag or message',
   pause: 'Pause',
@@ -57,6 +66,10 @@ const EN: Strings = {
   older: 'Older',
   newer: 'Newer',
   follow: 'Follow',
+  wrap: 'Wrap',
+  unwrap: 'No wrap',
+  copied: count => `${count} line${count === 1 ? '' : 's'} copied`,
+  copyFailed: 'could not copy to the clipboard',
   newerLines: '{n} newer lines below; f follows the newest',
   off: 'off',
   starting: 'starting',
@@ -66,6 +79,7 @@ const EN: Strings = {
   noAdb: 'adb not found: put it on PATH or set ANDROID_HOME',
   noDevice: 'no device connected, retrying',
   notInstalled: pkg => `${pkg} is not installed on the device, retrying`,
+  noneInstalled: count => `none of the repo\u2019s ${count} app id${count === 1 ? '' : 's'} is installed on the device, retrying`,
   allProcesses: 'all processes',
   oneOf: (chosen, count) => `${chosen} (1 of ${count})`,
   empty: 'No lines match.',
@@ -75,9 +89,10 @@ const EN: Strings = {
 
 const KO: Strings = {
   commandDescription: '연결된 안드로이드 단말의 logcat을 패널로 보여 줍니다. 다시 치면 숨깁니다',
-  argumentHint: '[off | clear | <package>]',
+  argumentHint: '[off | clear | auto | <package>]',
   paneTitle: 'logcat',
   turnedOn: pkg => `logcat 켬: ${pkg}`,
+  turnedOnAuto: 'logcat 켬: 단말에 설치된 레포의 앱',
   turnedOff: 'logcat 끔',
   cleared: 'logcat 비움',
   alreadyOff: 'logcat이 이미 꺼져 있습니다',
@@ -85,6 +100,7 @@ const KO: Strings = {
   badPackage: arg => `패키지 이름이 아닙니다: ${arg}`,
   error: reason => `오류: ${reason}`,
   level: '레벨',
+  app: '앱',
   filter: '필터',
   filterPlaceholder: '태그 또는 메시지',
   pause: '일시정지',
@@ -93,6 +109,10 @@ const KO: Strings = {
   older: '이전',
   newer: '이후',
   follow: '따라가기',
+  wrap: '줄바꿈',
+  unwrap: '줄바꿈 끄기',
+  copied: count => `${count}줄 복사됨`,
+  copyFailed: '클립보드에 복사하지 못했습니다',
   newerLines: '아래에 {n}줄 더 있음. f를 누르면 최신을 따라갑니다',
   off: '꺼짐',
   starting: '시작 중',
@@ -102,6 +122,7 @@ const KO: Strings = {
   noAdb: 'adb를 찾을 수 없습니다. PATH에 두거나 ANDROID_HOME을 설정하세요',
   noDevice: '연결된 단말이 없습니다. 다시 시도 중',
   notInstalled: pkg => `${pkg}이(가) 단말에 없습니다. 다시 시도 중`,
+  noneInstalled: count => `레포의 앱 ${count}개 중 단말에 설치된 것이 없습니다. 다시 시도 중`,
   allProcesses: '전체 프로세스',
   oneOf: (chosen, count) => `${chosen} (${count}개 중 1개)`,
   empty: '맞는 줄이 없습니다.',

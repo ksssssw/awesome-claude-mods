@@ -1,12 +1,28 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import { detectApplicationId, findAdb, listDevices, pidOf, resolvePackage } from './adb'
+import { detectApplicationIds, findAdb, foregroundPackage, listDevices, listInstalled, pidOf } from './adb'
 import { setLanguage, t } from './i18n'
 import type { LinesProps } from './lines'
 import { line } from './line'
-import { asLevel, clampInt, formatLine, isPackageName, LEVEL_OPTIONS, logcatArgv, parseLine, RingBuffer, splitLines, stampOf, tail } from './model'
-import type { Entry, Level } from './model'
+import {
+  asLevel,
+  chooseCandidate,
+  clampInt,
+  DEFAULT_LEVEL,
+  formatLine,
+  installedCandidates,
+  isPackageName,
+  LEVEL_OPTIONS,
+  logcatArgv,
+  parseLine,
+  pickPackage,
+  RingBuffer,
+  splitLines,
+  stampOf,
+  tail,
+} from './model'
+import type { Entry, InstalledPackage, Level } from './model'
 
 const PLUGIN = 'android-logcat'
 const PANE = 'logcat'
@@ -25,30 +41,43 @@ const TOOL_LINES = 100
 const TOOL_LINES_MAX = 500
 // Lines the pane draws: more than fit, so the person scrolls back through them with the arrows
 const SCROLLBACK = 300
+// The override and the remembered value that follow every process instead of one app
+const ALL = '*'
+// $.store keys: the package each repo follows, by its root; whether lines wrap
+const STORE_PACKAGES = 'packages'
+const STORE_WRAP = 'wrap'
 
 // What survives a hot reload: on or off, the package the person named, the filters
 const isOn = atom({ plugin: 'android-logcat', key: 'isOn' } as const, false)
 const override = atom({ plugin: 'android-logcat', key: 'override' } as const, null)
-const level = atom({ plugin: 'android-logcat', key: 'level' } as const, 'D')
+const level = atom({ plugin: 'android-logcat', key: 'level' } as const, DEFAULT_LEVEL)
 const filter = atom({ plugin: 'android-logcat', key: 'filter' } as const, '')
 const isPaused = atom({ plugin: 'android-logcat', key: 'isPaused' } as const, false)
 // A write redraws the pane, which is how a press or a key moves the lines
 const scroll = atom({ plugin: 'android-logcat', key: 'scroll' } as const, 0)
+const isWrap = atom({ plugin: 'android-logcat', key: 'isWrap' } as const, true)
+const selectionEpoch = atom({ plugin: 'android-logcat', key: 'selectionEpoch' } as const, 0)
 
 type Status =
   | { kind: 'off' | 'starting' | 'no-adb' | 'no-device' }
-  | { kind: 'not-installed'; package: string }
+  | { kind: 'not-installed'; package: string; choices: string[] }
+  // The repo sets app ids, and none of them is on the device
+  | { kind: 'none-installed'; count: number }
   | { kind: 'reconnecting'; package: string; reason?: string }
   | { kind: 'error'; reason: string }
-  | { kind: 'live'; package: string; isAll: boolean; candidates: number; uid?: number; pid?: number; serial: string; model?: string }
+  | { kind: 'live'; package: string; isAll: boolean; choices: string[]; uid?: number; pid?: number; serial: string; model?: string }
 
 type Capture = {
   controller: AbortController
   // The running child's stream, so a stop ends it even while no line arrives
   stream?: AsyncGenerator<unknown, unknown>
-  // Found once per capture: the adb to run and the repo's app (null: looked, none)
+  // Found once per capture: the adb to run, the package named over the repo's (null: none, so the repo's
+  // apps on the device), and the app ids the repo's build files set
   adb?: string
-  base?: string | null
+  named?: string | null
+  ids?: string[]
+  // The repo's app picked the first time, kept while it stays installed so a reconnect does not hop
+  autoPick?: string
   // Set once a `--uid` child ended without a line: the device refuses it, so the pid path is taken
   avoidUid: boolean
   // The newest line's stamp, where a reconnect resumes from instead of the backlog
@@ -72,6 +101,13 @@ let isToolRegistered = false
 let lastStatusLine: string | undefined
 // Rows the lines region had at the last draw, for paging
 let lastRoom = 10
+// Where the session runs: the git repository's root, else the working folder; what a remembered package is kept by
+let repoRoot = ''
+// Rising number given each line as it comes in, what a selection names lines by
+let nextSeq = 0
+// Set while a selection in the lines region holds the view; whether the view followed the newest before it
+let isSelecting = false
+let wasFollowing = false
 
 function setStatus(next: Status) {
   status = next
@@ -79,6 +115,7 @@ function setStatus(next: Status) {
 }
 
 function ingest(entry: Entry) {
+  entry.seq = nextSeq++
   buffer.push(entry)
   if (entry.level === 'E' || entry.level === 'F') counts.errors++
   else if (entry.level === 'W') counts.warnings++
@@ -87,6 +124,7 @@ function ingest(entry: Entry) {
 }
 
 function clear() {
+  isSelecting = false
   buffer.clear()
   frozen = []
   held = undefined
@@ -156,23 +194,47 @@ async function step($: EngineInterface, self: Capture, sleep: Sleep): Promise<bo
     return sleep(RETRY_MS)
   }
 
-  if (self.base === undefined) {
-    self.base = (await read($, override)) ?? (options.package || undefined) ?? (await detectApplicationId($, await $.session.cwd())) ?? null
-  }
-  const base = self.base ?? undefined
+  if (self.named === undefined) self.named = await namedPackage($)
+  if (self.ids === undefined) self.ids = repoRoot ? await detectApplicationIds($, repoRoot) : []
+  const named = self.named
+  const ids = self.ids
+  const installed = (await listInstalled($, adb, device.serial)) ?? []
+  const fromRepo = installedCandidates(installed, ids)
+  const choices = fromRepo.map(p => p.name)
+  void offerChoices($, choices)
+
   let spec: { uid?: number; pid?: number } = {}
-  let pkg = base
-  let candidates = 0
-  if (base) {
-    const picked = self.avoidUid ? undefined : await resolvePackage($, adb, device.serial, base)
-    if (picked) {
-      pkg = picked.chosen.name
-      candidates = picked.candidates.length
-      spec = { uid: picked.chosen.uid }
-    } else {
-      const pid = await pidOf($, adb, device.serial, base)
+  let pkg: string | undefined
+  if (named && named !== ALL) {
+    // A package the person named: itself, or the first of its flavors; by pid where the uid path is refused
+    const picked = self.avoidUid ? undefined : pickPackage(installed, named)
+    pkg = picked?.chosen.name ?? named
+    if (picked) spec = { uid: picked.chosen.uid }
+    else {
+      const pid = await pidOf($, adb, device.serial, named)
       if (pid === undefined) {
-        setStatus({ kind: 'not-installed', package: base })
+        setStatus({ kind: 'not-installed', package: named, choices })
+        return sleep(RETRY_MS)
+      }
+      spec = { pid }
+    }
+  } else if (named !== ALL && ids.length > 0) {
+    // The repo's apps that are on the device: the one picked before, else the one on screen, else the first
+    if (fromRepo.length === 0) {
+      setStatus({ kind: 'none-installed', count: ids.length })
+      return sleep(RETRY_MS)
+    }
+    const kept = fromRepo.find(p => p.name === self.autoPick)
+    const chosen: InstalledPackage | undefined =
+      kept ?? chooseCandidate(fromRepo, fromRepo.length > 1 ? await foregroundPackage($, adb, device.serial) : undefined)
+    if (!chosen) return sleep(RETRY_MS)
+    self.autoPick = chosen.name
+    pkg = chosen.name
+    if (!self.avoidUid) spec = { uid: chosen.uid }
+    else {
+      const pid = await pidOf($, adb, device.serial, chosen.name)
+      if (pid === undefined) {
+        setStatus({ kind: 'not-installed', package: chosen.name, choices })
         return sleep(RETRY_MS)
       }
       spec = { pid }
@@ -180,7 +242,7 @@ async function step($: EngineInterface, self: Capture, sleep: Sleep): Promise<bo
   }
   if (signal.aborted) return false
 
-  setStatus({ kind: 'live', package: pkg ?? '', isAll: !pkg, candidates, ...spec, serial: device.serial, model: device.model })
+  setStatus({ kind: 'live', package: pkg ?? '', isAll: !pkg, choices, ...spec, serial: device.serial, model: device.model })
   // The first child brings a backlog; a later one resumes where the last line left off, so nothing is read twice
   const resumeFrom = self.lastStamp
   const stream = $.process.spawn({ argv: logcatArgv(adb, device.serial, spec, resumeFrom ?? BACKLOG) })
@@ -257,7 +319,7 @@ async function scrollBy($: EngineInterface, kind: Scroll | number) {
   if (landed > 0 && held === undefined) {
     held = buffer.toArray().slice()
     arrivedSinceHeld = 0
-  } else if (landed === 0 && held !== undefined) {
+  } else if (landed === 0 && held !== undefined && !isSelecting) {
     held = undefined
     arrivedSinceHeld = 0
     isDirty = true
@@ -265,7 +327,90 @@ async function scrollBy($: EngineInterface, kind: Scroll | number) {
 }
 
 async function visibleNow($: EngineInterface): Promise<number> {
-  return visibleCount(asLevel(await read($, level), 'D'), await read($, filter))
+  return visibleCount(asLevel(await read($, level), DEFAULT_LEVEL), await read($, filter))
+}
+
+// The package named over the repo's apps: this session's, else the one remembered for the repo, else the option
+async function namedPackage($: EngineInterface): Promise<string | null> {
+  const session = await read($, override)
+  if (session) return session
+  const remembered = (await rememberedPackages($))[repoRoot]
+  if (remembered) return remembered
+  return options.package || null
+}
+
+async function rememberedPackages($: EngineInterface): Promise<Record<string, string>> {
+  try {
+    const value = await $.store.get(STORE_PACKAGES)
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+    const out: Record<string, string> = {}
+    for (const [root, pkg] of Object.entries(value as Record<string, unknown>)) {
+      if (typeof pkg === 'string' && (pkg === ALL || isPackageName(pkg))) out[root] = pkg
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+// Keeps `pkg` as the repo's app for later sessions; undefined forgets it
+async function remember($: EngineInterface, pkg: string | undefined) {
+  if (!repoRoot) return
+  const all = await rememberedPackages($)
+  if (pkg === undefined) delete all[repoRoot]
+  else all[repoRoot] = pkg
+  try {
+    await $.store.set(STORE_PACKAGES, all)
+  } catch {
+    // a full or refused store: this session still follows it
+  }
+}
+
+async function findRepoRoot($: EngineInterface): Promise<string> {
+  try {
+    const repo = await $.session.repo()
+    if (repo?.root) return repo.root
+  } catch {
+    // no git: the working folder
+  }
+  try {
+    return await $.session.cwd()
+  } catch {
+    return ''
+  }
+}
+
+// The command's hint names the repo's apps on the device, so the person sees what to type
+let lastHint = ''
+async function offerChoices($: EngineInterface, choices: readonly string[]) {
+  const hint = choices.length > 0 ? `[off | clear | auto | ${choices.join(' | ')}]` : t().argumentHint
+  if (hint === lastHint) return
+  lastHint = hint
+  try {
+    await $.command.register({ name: COMMAND, description: t().commandDescription, argumentHint: hint })
+  } catch {
+    // the hint stays as it was
+  }
+}
+
+// Follows `pkg` from now on, in this session and for this repo, the lines of the last one cleared
+async function follow($: EngineInterface, pkg: string) {
+  await update($, override, () => pkg)
+  await remember($, pkg)
+  await turnOn($)
+}
+
+// Drops the lines region's selection and lets the view follow again where it did before
+async function endSelection($: EngineInterface) {
+  if (!isSelecting) return
+  isSelecting = false
+  if (wasFollowing && (await read($, scroll)) === 0) {
+    held = undefined
+    arrivedSinceHeld = 0
+  }
+  wasFollowing = false
+  isDirty = true
+  await update($, selectionEpoch, n => n + 1)
 }
 
 function visibleCount(min: Level, text: string): number {
@@ -292,6 +437,7 @@ async function ensureTool($: EngineInterface) {
 }
 
 async function turnOn($: EngineInterface) {
+  repoRoot = await findRepoRoot($)
   await update($, isOn, () => true)
   await ensureTool($)
   $.ui.invalidate('tool.describe')
@@ -317,7 +463,7 @@ async function turnOff($: EngineInterface) {
 function packageLabel(): string {
   if (status.kind === 'live') {
     if (status.isAll) return t().allProcesses
-    return status.candidates > 1 ? t().oneOf(status.package, status.candidates) : status.package
+    return status.choices.length > 1 && status.choices.includes(status.package) ? t().oneOf(status.package, status.choices.length) : status.package
   }
   if (status.kind === 'not-installed' || status.kind === 'reconnecting') return status.package
   return ''
@@ -339,6 +485,8 @@ function statusText(): { text: string; color: string } {
       return { text: t().noDevice, color: 'error' }
     case 'not-installed':
       return { text: t().notInstalled(status.package), color: 'error' }
+    case 'none-installed':
+      return { text: t().noneInstalled(status.count), color: 'error' }
     case 'live':
       return isPausedNow ? { text: t().paused, color: 'warning' } : { text: t().live, color: 'success' }
   }
@@ -359,6 +507,12 @@ export const register: Register = (on, opts) => {
     const started = await next(e)
 
     isPausedNow = await read($, isPaused)
+    try {
+      const wrap = await $.store.get(STORE_WRAP)
+      if (typeof wrap === 'boolean') await update($, isWrap, () => wrap)
+    } catch {
+      // the default stands
+    }
     $.clock.every(REDRAW_MS, () => {
       if (!isDirty) return
       isDirty = false
@@ -374,6 +528,7 @@ export const register: Register = (on, opts) => {
     // A reload ended the child; the state says it was on, so it comes back by itself
     if (await read($, isOn)) {
       await ensureTool($)
+      repoRoot = await findRepoRoot($)
       setStatus({ kind: 'reconnecting', package: '' })
       startCapture($)
       void $.ui.open({ id: PANE, title: t().paneTitle, rows: options.rows })
@@ -395,10 +550,18 @@ export const register: Register = (on, opts) => {
       $.ui.invalidate('ui.render')
       return { text: t().cleared }
     }
+    if (arg === 'auto') {
+      // Forgets the repo's remembered package and goes back to the repo's own apps
+      repoRoot = await findRepoRoot($)
+      await remember($, undefined)
+      await update($, override, () => null)
+      await turnOn($)
+      return { text: t().turnedOnAuto }
+    }
     if (arg !== '') {
       if (!isPackageName(arg)) return { text: t().badPackage(arg) }
-      await update($, override, () => arg)
-      await turnOn($)
+      repoRoot = await findRepoRoot($)
+      await follow($, arg)
       return { text: t().turnedOn(arg) }
     }
     if (wasOn) {
@@ -407,7 +570,8 @@ export const register: Register = (on, opts) => {
       return { text: t().turnedOff }
     }
     await turnOn($)
-    return { text: t().turnedOn(options.package) }
+    const named = await namedPackage($)
+    return { text: named === ALL ? t().turnedOn(t().allProcesses) : named ? t().turnedOn(named) : t().turnedOnAuto }
   }).catch(($, e, next) => (next.called ? next(e) : { text: t().failed }))
 
   // The person's close mark or key is the off switch too; the plugin's own close already turned it off
@@ -418,8 +582,23 @@ export const register: Register = (on, opts) => {
 
   // The lines region posts the keys it got; the buttons do the same through scrollBy
   on('ui.message', { element: 'lines' }, async ($, e) => {
-    const data = e.data as { scroll?: Scroll } | null
+    const data = e.data as { scroll?: Scroll; select?: 'begin'; copy?: string; count?: number } | null
+    if (data?.select === 'begin' && !isSelecting) {
+      // The rows under the pointer hold still: a snapshot of what is shown, the capture going on behind it
+      isSelecting = true
+      wasFollowing = held === undefined
+      if (held === undefined && !isPausedNow) {
+        held = buffer.toArray().slice()
+        arrivedSinceHeld = 0
+      }
+    }
     if (data?.scroll) await scrollBy($, data.scroll)
+    if (typeof data?.copy === 'string' && data.copy !== '') {
+      const copied = await $.ui.copy({ text: data.copy, surface: e.surface })
+      const count = typeof data.count === 'number' ? data.count : data.copy.split('\n').length
+      $.ui.toast(copied.isCopied ? t().copied(count) : t().copyFailed)
+      await endSelection($)
+    }
     return {}
   })
 
@@ -455,7 +634,9 @@ export const register: Register = (on, opts) => {
     const isTui = e.surface === 'terminal'
     const hk = (key: string) => (isTui ? key : undefined)
 
-    const min = asLevel(await read($, level), 'D')
+    const min = asLevel(await read($, level), DEFAULT_LEVEL)
+    const wrap = await read($, isWrap)
+    const epoch = await read($, selectionEpoch)
     const text = await read($, filter)
     const paused = await read($, isPaused)
     const shown = tail(viewed(), min, text, SCROLLBACK)
@@ -464,7 +645,30 @@ export const register: Register = (on, opts) => {
     const room = Math.max(1, (e.props.scroll?.bodyRows ?? options.rows) - (isTui ? 3 : 5))
     lastRoom = room
     const offset = Math.min(await read($, scroll), Math.max(0, shown.length - room))
-    const scrollTo = (kind: Scroll) => void scrollBy($, kind)
+    const scrollTo = (kind: Scroll) => {
+      void (async () => {
+        if (kind === 'newest') await endSelection($)
+        await scrollBy($, kind)
+      })()
+    }
+    const toggleWrap = async () => {
+      const next = !(await read($, isWrap))
+      await update($, isWrap, () => next)
+      try {
+        await $.store.set(STORE_WRAP, next)
+      } catch {
+        // this session keeps it
+      }
+    }
+    // The repo's apps on the device to switch to, and every process; the one followed now first when it is none of them
+    const choices = status.kind === 'live' || status.kind === 'not-installed' ? status.choices : []
+    const current = status.kind === 'live' ? (status.isAll ? ALL : status.package) : status.kind === 'not-installed' ? status.package : ''
+    const appOptions = [
+      ...(current && current !== ALL && !choices.includes(current) ? [{ value: current, label: current }] : []),
+      ...choices.map(name => ({ value: name, label: name })),
+      { value: ALL, label: t().allProcesses },
+    ]
+    const hasAppPicker = current !== '' && (choices.length >= 2 || (choices.length >= 1 && !choices.includes(current)))
     const state = statusText()
     const pkg = packageLabel()
     const extra =
@@ -481,6 +685,7 @@ export const register: Register = (on, opts) => {
     const clearAll = () => {
       clear()
       void update($, scroll, () => 0)
+      void update($, selectionEpoch, n => n + 1)
     }
 
     return (
@@ -506,13 +711,24 @@ export const register: Register = (on, opts) => {
           </Box>
         )}
         <Box gap={1} alignItems="center" flexWrap="wrap">
+          {Select && hasAppPicker && (
+            <Select
+              key="package"
+              label={t().app}
+              options={appOptions}
+              value={current}
+              onSelect={value => {
+                if (value !== current && (value === ALL || isPackageName(value))) void follow($, value)
+              }}
+            />
+          )}
           {Select && (
             <Select
               key="level"
               label={t().level}
               options={LEVEL_OPTIONS}
               value={min}
-              onSelect={value => void update($, level, () => asLevel(value, 'D'))}
+              onSelect={value => void update($, level, () => asLevel(value, DEFAULT_LEVEL))}
             />
           )}
           <Button key="pause" hotkey={hk('p')} variant={isTui ? undefined : 'primary'} onPress={() => void togglePause()}>
@@ -530,6 +746,9 @@ export const register: Register = (on, opts) => {
           <Button key="follow" hotkey={hk('f')} dimColor={!isTui} onPress={() => scrollTo('newest')}>
             {t().follow}
           </Button>
+          <Button key="wrap" hotkey={hk('w')} dimColor={!isTui} onPress={() => void toggleWrap()}>
+            {wrap ? t().unwrap : t().wrap}
+          </Button>
         </Box>
         {Input && (
           <Box width="100%">
@@ -544,7 +763,13 @@ export const register: Register = (on, opts) => {
           </Box>
         )}
         {Client ? (
-          <Client key="lines" module="./lines.tsx" height={room} props={linesProps(shown, offset, room, arrivedSinceHeld, isTui)} />
+          <Client
+            key="lines"
+            module="./lines.tsx"
+            width="100%"
+            height={room}
+            props={linesProps(shown, offset, room, e.props.bodyColumns ?? 80, arrivedSinceHeld, isTui, wrap, epoch)}
+          />
         ) : (
           <Box flexDirection="column">
             {shown.length === 0 && <Text dimColor>{t().empty}</Text>}
@@ -556,6 +781,6 @@ export const register: Register = (on, opts) => {
   })
 }
 
-function linesProps(lines: Entry[], offset: number, rows: number, newerCount: number, isTui: boolean): LinesProps {
-  return { lines, offset, rows, newerCount, empty: t().empty, newer: t().newerLines, isTui }
+function linesProps(lines: Entry[], offset: number, rows: number, columns: number, newerCount: number, isTui: boolean, isWrap: boolean, epoch: number): LinesProps {
+  return { lines, offset, rows, columns, newerCount, empty: t().empty, newer: t().newerLines, isTui, isWrap, epoch }
 }
