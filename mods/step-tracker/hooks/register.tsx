@@ -34,6 +34,8 @@ import {
 } from './model'
 import { setLanguage, t } from './i18n'
 import { gridSvg } from './svg'
+import { pickScene } from './mascot'
+import type { Mood, Scene } from './mascot'
 import { activityCells, activityGrid, timelineCells, timelineGrid } from './timeline'
 
 const PLUGIN = 'step-tracker'
@@ -58,6 +60,11 @@ const REPO_TOOLS = new Set(['Bash', 'EnterWorktree', 'ExitWorktree'])
 // without reading state eight times a second. Lost on a reload; session.start sets them again.
 let frame = 0
 let isAnimating = false
+// The mascot's scene for this session, and its walk: `pace` advances only while the turn works,
+// so the crab stops where it is when the model thinks. `lastMood` is what the band last drew.
+let scene: Scene = 'walk'
+let pace = 0
+let lastMood: Mood = 'idle'
 let isTicking = false
 let wasGraphShown = false
 let isRefreshing = false
@@ -195,6 +202,8 @@ async function setSteps($: $, change: (list: Step[]) => Step[]) {
 export const register: Register = (on, options) => {
   // Drawn in English unless the person picked another language in /config
   setLanguage(options.language)
+  // The scene the person picked, or one drawn at random for this session: /clear keeps it, a reload draws again
+  scene = pickScene(options.scene)
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -208,6 +217,7 @@ export const register: Register = (on, options) => {
     $.clock.every(125, () => {
       if (isTicking) return
       frame += 1
+      if (lastMood === 'working') pace += 1
       if (isAnimating || isShimmering || frame % 8 === 0) $.ui.invalidate('ui.render')
     })
     void refreshRepo($)
@@ -670,11 +680,12 @@ async function drawBand($: $, e: any, list: Step[], now: { isWorking: boolean; s
   let graph = null
   // Off the terminal, the timeline's rows, each drawn in its list row so the two stay level
   let timelineRows: any[] | null = null
-  const mood = !now.isWorking ? 'idle' : phase.kind === 'thinking' || phase.kind === 'waiting' ? 'thinking' : 'working'
+  const mood: Mood = !now.isWorking ? 'idle' : phase.kind === 'thinking' || phase.kind === 'waiting' ? 'thinking' : 'working'
+  lastMood = mood
   if (wasGraphShown && !isTui && Svg) {
     if (isPlanless) {
       isShimmering = true
-      graph = <Svg key="activity" source={gridSvg(activityGrid(log, graphWidth, listRows, at, frame, mood))} alt={t().activityAlt} />
+      graph = <Svg key="activity" source={gridSvg(activityGrid(log, graphWidth, listRows, at, frame, mood, scene, pace))} alt={t().activityAlt} />
     } else if (span) {
       timelineRows = timelineGrid(slice, graphWidth, span, at, frame).map((row, k) => (
         <Svg key={'timeline-' + k} source={gridSvg([row])} alt={t().timelineAlt} />
@@ -685,7 +696,7 @@ async function drawBand($: $, e: any, list: Step[], now: { isWorking: boolean; s
     if (isPlanless) {
       isShimmering = true
       graph = (
-        <Raster key="activity" columns={graphWidth} rows={listRows} cells={activityCells(log, graphWidth, listRows, at, frame, mood)} />
+        <Raster key="activity" columns={graphWidth} rows={listRows} cells={activityCells(log, graphWidth, listRows, at, frame, mood, scene, pace)} />
       )
     } else if (span) {
       const padded = [...slice]

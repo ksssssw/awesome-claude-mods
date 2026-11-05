@@ -157,6 +157,17 @@ test('the desktop draws the activity graph and the mascot as one Svg, and no bla
   await ui.unmount()
 })
 
+test('with a scene set the mascot plays it: fishing sits over water', { options: { scene: 'fish' } }, async ($, on) => {
+  engine(on)
+  on('ui.toast', () => ({ value: undefined }))
+  await $.command.run({ command: 'steps' } as never)
+  await $.tool.call({ tool: 'Read', file_path: '/r/a.ts' } as never)
+  const ui = await $.ui.mount({ ...band(100), surface: 'desktop' })
+  const graph = await ui.find({ type: 'Svg' })
+  expect(String(graph?.props.source)).toContain('≈')
+  await ui.unmount()
+})
+
 test('background agents keep the band up after the turn, each with what it does', async ($, on) => {
   engine(on)
   on('agent.spawn', () => ({ model: 'm', agentId: 'ag1' }))

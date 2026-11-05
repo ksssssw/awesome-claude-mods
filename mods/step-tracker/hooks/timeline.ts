@@ -1,6 +1,11 @@
 // The step timeline: one Raster row per list row, each step a bar from its start to its end
 import { mix } from './model'
 import type { CallEntry, CallKind, Row } from './model'
+import { MASCOT_ROWS, drawMascot } from './mascot'
+import type { Mood, Scene } from './mascot'
+
+export { MASCOT_ROWS, MASCOT_WIDTH, mascotColumn } from './mascot'
+export type { Mood, Scene } from './mascot'
 
 export const DEFAULT_COLOR = 0x01000000
 const SPACE = 0x20
@@ -67,7 +72,7 @@ export function gridCells(grid: Grid): string {
 }
 
 // The activity graph beside a planless list: calls per two seconds as bars, newest at the right,
-// and under them Claude's mascot, walking while the turn runs, a thought over its head while the model thinks
+// and under them Claude's mascot playing its scene (see mascot.ts)
 export const BUCKET_MS = 2000
 export const KIND_COLORS: Record<CallKind, number> = {
   read: 0x6e9ecf,
@@ -77,57 +82,14 @@ export const KIND_COLORS: Record<CallKind, number> = {
   skill: 0xe5c07b,
   other: 0x8a8f98,
 }
-const MASCOT_COLOR = 0xd97757
 const AXIS_COLOR = 0x3a3f45
 const LOWER = 0x2581
-
-// The logo's crab: a head with two eyes, a body, legs in two steps
-const MASCOT_BODY = [' ▐▛███▜▌ ', '▝▜█████▛▘']
-const MASCOT_BLINK = ' ▐█████▌ '
-const MASCOT_LEGS = ['  ▘▘ ▝▝  ', '  ▝▘ ▘▝  ']
-export const MASCOT_WIDTH = 9
-// The rows the mascot takes: a thought, the head, the body, the legs
-export const MASCOT_ROWS = 4
-
-export type Mood = 'idle' | 'working' | 'thinking'
 
 // Rows of [codePoint, foreground] cells: what a Raster draws in the terminal and an Svg elsewhere
 export type Grid = [number, number][][]
 
 function blankGrid(columns: number, rows: number): Grid {
   return Array.from({ length: rows }, () => Array.from({ length: columns }, () => [SPACE, DEFAULT_COLOR] as [number, number]))
-}
-
-function put(grid: Grid, row: number, column: number, text: string, color: number) {
-  let c = column
-  for (const char of text) {
-    const cell = grid[row]?.[c]
-    if (cell && char !== ' ') grid[row]![c] = [char.codePointAt(0) ?? SPACE, color]
-    c += 1
-  }
-}
-
-// Where the mascot stands: pacing the width while it works, still otherwise
-export function mascotColumn(columns: number, frame: number, mood: Mood): number {
-  const room = Math.max(0, columns - MASCOT_WIDTH)
-  if (room === 0) return 0
-  if (mood === 'idle') return Math.floor(room / 2)
-  const step = Math.floor(frame / 2) % (room * 2)
-  return step <= room ? step : room * 2 - step
-}
-
-function drawMascot(grid: Grid, top: number, columns: number, frame: number, mood: Mood) {
-  const x = mascotColumn(columns, frame, mood)
-  // A blink every few seconds; the legs step while it walks
-  const isBlinking = frame % 40 < 2
-  const legs = mood === 'idle' ? MASCOT_LEGS[0]! : MASCOT_LEGS[Math.floor(frame / 2) % 2]!
-  if (mood === 'thinking') {
-    const dots = ['·  ', '·∙ ', '·∙•'][Math.floor(frame / 4) % 3]!
-    put(grid, top, x + MASCOT_WIDTH - 2, dots, 0xb5b9c0)
-  }
-  put(grid, top + 1, x, isBlinking ? MASCOT_BLINK : MASCOT_BODY[0]!, MASCOT_COLOR)
-  put(grid, top + 2, x, MASCOT_BODY[1]!, MASCOT_COLOR)
-  put(grid, top + 3, x, legs, MASCOT_COLOR)
 }
 
 // The calls of each two-second bucket, the last bucket ending now, by kind
@@ -149,8 +111,10 @@ export function activityCells(
   now: number,
   frame: number,
   mood: Mood,
+  scene: Scene = 'walk',
+  pace = frame,
 ): string {
-  return gridCells(activityGrid(log, columns, rows, now, frame, mood))
+  return gridCells(activityGrid(log, columns, rows, now, frame, mood, scene, pace))
 }
 
 export function activityGrid(
@@ -160,6 +124,8 @@ export function activityGrid(
   now: number,
   frame: number,
   mood: Mood,
+  scene: Scene = 'walk',
+  pace = frame,
 ): Grid {
   const grid = blankGrid(columns, rows)
   const mascotRows = rows >= MASCOT_ROWS + 1 ? MASCOT_ROWS : 0
@@ -185,7 +151,7 @@ export function activityGrid(
       }
     })
   }
-  if (mascotRows > 0) drawMascot(grid, chartRows, columns, frame, mood)
+  if (mascotRows > 0) drawMascot(grid, chartRows, columns, frame, mood, scene, pace)
   return grid
 }
 

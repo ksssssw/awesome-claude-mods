@@ -1,6 +1,6 @@
 {
   "name": "step-tracker",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "A framed band above the prompt that shows Claude's plan steps, what it is doing right now, the calls it just made, a live activity graph, background agents and shells, and the branch you are on.",
   "author": {
     "name": "ksssssw",
@@ -25,6 +25,20 @@
       "options": [
         "en",
         "ko"
+      ]
+    },
+    "scene": {
+      "type": "string",
+      "title": "Mascot scene",
+      "description": "What the mascot under the activity graph does: random (one scene per session), walk, ball, fish, jump or nap.",
+      "default": "random",
+      "options": [
+        "random",
+        "walk",
+        "ball",
+        "fish",
+        "jump",
+        "nap"
       ]
     }
   },

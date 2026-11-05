@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.0
+
+- The mascot plays one of five scenes, drawn at random when the session starts so open sessions differ: walk, ball, fish, jump or nap. Each shows working, thinking and idle its own way, and the walk now stops where it is while the model thinks.
+- A `scene` option (`random`, `walk`, `ball`, `fish`, `jump`, `nap`) pins a scene.
+
 ## 0.7.1
 
 - The desktop app draws the band as a rounded bordered box, with the header in its first row, instead of box-drawing text that broke in a proportional font. The band takes only the rows it holds there.
